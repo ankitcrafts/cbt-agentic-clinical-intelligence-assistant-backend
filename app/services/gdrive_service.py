@@ -111,7 +111,7 @@ class GoogleDriveService:
                 "base64": b64_content,
             }
 
-            resp = requests.post(webhook_url, json=payload, timeout=60, allow_redirects=True)
+            resp = requests.post(webhook_url, json=payload, timeout=15, allow_redirects=True)
             if resp.status_code == 200:
                 try:
                     data = resp.json()

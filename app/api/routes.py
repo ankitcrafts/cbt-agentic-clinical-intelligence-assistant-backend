@@ -58,11 +58,15 @@ async def upload_recording(
         dur_sec = int(duration_seconds) if duration_seconds and duration_seconds.isdigit() else 0
 
         # 1. Upload to Google Drive Shared Folder
-        gdrive_result = gdrive_service.upload_file(
-            file_path=str(file_path),
-            file_name=clean_filename,
-            mime_type=file.content_type or "audio/wav",
-        )
+        try:
+            gdrive_result = gdrive_service.upload_file(
+                file_path=str(file_path),
+                file_name=clean_filename,
+                mime_type=file.content_type or "audio/wav",
+            )
+        except Exception as gd_err:
+            print(f"[Warning] Google Drive upload error: {gd_err}")
+            gdrive_result = {"success": False, "error": str(gd_err)}
 
         recording_status = "Uploaded to Google Drive" if gdrive_result.get("success") else "Uploaded"
 
@@ -78,9 +82,9 @@ async def upload_recording(
                 pipeline_res = pipeline.run_from_audio(
                     audio_path=str(file_path),
                     doctor_name=doctor_name or "Dr. Yuki Tanaka",
-                    patient_name=patient_name or "Marcus Delgado",
+                    patient_name=patient_name or "Patient",
                     doctor_initials=doctor_initials or "YT",
-                    patient_initials=patient_initials or "MD",
+                    patient_initials=patient_initials or "PT",
                 )
                 transcript = pipeline_res.get("transcript", "")
                 exchanges = pipeline_res.get("exchanges", [])
@@ -88,8 +92,32 @@ async def upload_recording(
                 clinical_analysis = pipeline_res.get("clinical_analysis", {})
                 recording_status += " & Transcribed"
             except Exception as pipe_err:
-                print(f"[Warning] Deepgram transcription / pipeline warning: {pipe_err}")
+                print(f"[Warning] Pipeline error, performing direct Deepgram fallback: {pipe_err}")
                 traceback.print_exc()
+                try:
+                    asr = pipeline.deepgram.transcribe(str(file_path))
+                    transcript = asr.get("transcript", "")
+                    labeled = pipeline.conversation.to_doctor_patient(asr.get("conversation", []))
+                    exchanges = pipeline._format_exchanges(
+                        labeled_turns=labeled.get("conversation", []),
+                        doctor_name=doctor_name or "Dr. Yuki Tanaka",
+                        patient_name=patient_name or "Patient",
+                        doctor_initials=doctor_initials or "YT",
+                        patient_initials=patient_initials or "PT",
+                    )
+                    ai_suggestions = pipeline._fallback_suggestions({})
+                    clinical_analysis = {
+                        "summary": pipeline._fallback_summary(labeled.get("conversation", []), patient_name or "Patient"),
+                        "entities": pipeline._fallback_entities(labeled.get("conversation", [])),
+                        "differential_diagnosis": pipeline._fallback_differential({}, {}),
+                        "soap_report": pipeline._fallback_soap_report({}, labeled.get("conversation", [])),
+                        "ai_suggestions": ai_suggestions,
+                    }
+                    pipeline_res = clinical_analysis
+                    recording_status += " & Transcribed (Fallback)"
+                except Exception as fallback_err:
+                    print(f"[Error] Deepgram direct fallback failed: {fallback_err}")
+                    traceback.print_exc()
 
         # 3. Save recording metadata in database
         recording_id = str(uuid.uuid4())
