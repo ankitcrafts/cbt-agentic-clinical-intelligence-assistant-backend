@@ -156,6 +156,11 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.env.*
+!.env.example
+
+service_account.json
+*.json
 
 # Spyder project settings
 .spyderproject
