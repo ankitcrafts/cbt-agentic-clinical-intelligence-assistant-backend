@@ -1,8 +1,7 @@
 import json
 import os
 from datetime import datetime
-
-from deepgram import DeepgramClient
+import requests
 
 from app.core.config import DEEPGRAM_API_KEY
 
@@ -11,24 +10,40 @@ os.makedirs("output", exist_ok=True)
 
 class DeepgramService:
     def __init__(self):
-        self.client = DeepgramClient(api_key=DEEPGRAM_API_KEY)
+        self.api_key = DEEPGRAM_API_KEY
 
     def transcribe(self, file_path: str):
         with open(file_path, "rb") as f:
             audio = f.read()
 
-        response = self.client.listen.v1.media.transcribe_file(
-            request=audio,
-            model="nova-3",
-            language="en",
-            smart_format=True,
-            punctuate=True,
-            diarize=True,
-            utterances=True,
-            paragraphs=True,
-        )
+        headers = {
+            "Authorization": f"Token {self.api_key}",
+            "Content-Type": "audio/*",
+        }
+        params = {
+            "model": "nova-3",
+            "language": "en",
+            "smart_format": "true",
+            "punctuate": "true",
+            "diarize": "true",
+            "utterances": "true",
+            "paragraphs": "true",
+        }
 
-        result = response.model_dump(mode="json")
+        try:
+            resp = requests.post(
+                "https://api.deepgram.com/v1/listen",
+                headers=headers,
+                params=params,
+                data=audio,
+                timeout=60,
+            )
+            if resp.status_code != 200:
+                raise RuntimeError(f"Deepgram API error ({resp.status_code}): {resp.text}")
+            result = resp.json()
+        except Exception as api_err:
+            print(f"[Deepgram Error] {api_err}")
+            raise api_err
         conversation = self._build_conversation(result)
         transcript = self._extract_transcript(result, conversation)
 

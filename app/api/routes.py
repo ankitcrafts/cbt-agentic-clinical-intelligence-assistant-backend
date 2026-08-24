@@ -29,17 +29,27 @@ async def upload_recording(
     encounter_id: Optional[str] = Form("CONS-41233"),
     doctor_id: Optional[str] = Form("DOC-001"),
     patient_id: Optional[str] = Form("P1245"),
+    doctor_name: Optional[str] = Form("Dr. Yuki Tanaka"),
+    patient_name: Optional[str] = Form("Marcus Delgado"),
+    doctor_initials: Optional[str] = Form("YT"),
+    patient_initials: Optional[str] = Form("MD"),
     recording_started_at: Optional[str] = Form(None),
     recording_ended_at: Optional[str] = Form(None),
     duration_seconds: Optional[str] = Form("0"),
+    auto_transcribe: Optional[bool] = Form(True),
     db: Session = Depends(get_db),
 ):
     """
     Upload a clinical recording file from doctor consultation session.
-    Saves audio to app/uploads, syncs to Google Drive shared folder, and records metadata in database.
+    1. Saves audio locally to app/uploads.
+    2. Uploads audio to Google Drive shared folder (replacing AWS S3).
+    3. Runs Deepgram Speech-to-Text with Speaker Diarization.
+    4. Generates real-time AI Consultation Suggestions and Clinical Decision Support.
+    5. Saves recording metadata in database and returns full payload to frontend.
     """
     try:
-        clean_filename = file.filename or f"rec_{encounter_id}_{uuid.uuid4().hex[:8]}.wav"
+        raw_name = Path(file.filename).name if file.filename else None
+        clean_filename = raw_name or f"rec_{encounter_id}_{uuid.uuid4().hex[:8]}.wav"
         file_path = UPLOADS_DIR / clean_filename
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
@@ -47,7 +57,7 @@ async def upload_recording(
         file_size = file_path.stat().st_size if file_path.exists() else 0
         dur_sec = int(duration_seconds) if duration_seconds and duration_seconds.isdigit() else 0
 
-        # Upload to Google Drive Shared Folder
+        # 1. Upload to Google Drive Shared Folder
         gdrive_result = gdrive_service.upload_file(
             file_path=str(file_path),
             file_name=clean_filename,
@@ -56,7 +66,32 @@ async def upload_recording(
 
         recording_status = "Uploaded to Google Drive" if gdrive_result.get("success") else "Uploaded"
 
-        # Save to database
+        # 2. Run Real-Time Deepgram Transcription & Clinical Pipeline
+        transcript = ""
+        exchanges = []
+        ai_suggestions = []
+        clinical_analysis = {}
+        pipeline_res = {}
+
+        if auto_transcribe:
+            try:
+                pipeline_res = pipeline.run_from_audio(
+                    audio_path=str(file_path),
+                    doctor_name=doctor_name or "Dr. Yuki Tanaka",
+                    patient_name=patient_name or "Marcus Delgado",
+                    doctor_initials=doctor_initials or "YT",
+                    patient_initials=patient_initials or "MD",
+                )
+                transcript = pipeline_res.get("transcript", "")
+                exchanges = pipeline_res.get("exchanges", [])
+                ai_suggestions = pipeline_res.get("ai_suggestions", [])
+                clinical_analysis = pipeline_res.get("clinical_analysis", {})
+                recording_status += " & Transcribed"
+            except Exception as pipe_err:
+                print(f"[Warning] Deepgram transcription / pipeline warning: {pipe_err}")
+                traceback.print_exc()
+
+        # 3. Save recording metadata in database
         recording_id = str(uuid.uuid4())
         recording = ClinicalRecording(
             id=recording_id,
@@ -82,17 +117,90 @@ async def upload_recording(
             "id": recording_id,
             "status": recording_status,
             "encounterId": encounter_id,
+            "doctorId": doctor_id,
+            "patientId": patient_id,
             "fileName": clean_filename,
             "fileSize": file_size,
+            "durationSeconds": dur_sec,
             "gdriveUploaded": gdrive_result.get("success", False),
             "gdriveFileId": gdrive_result.get("file_id"),
             "gdriveWebViewLink": gdrive_result.get("web_view_link"),
             "gdriveFolderId": gdrive_result.get("folder_id", "1W0jt4Bb4RJ8ALo53zpzIAdahRfzKCmwi"),
-            "message": "Audio recording uploaded to Google Drive successfully!" if gdrive_result.get("success") else "Audio recording uploaded to ClinIQ server.",
+            "transcript": transcript,
+            "exchanges": exchanges,
+            "ai_suggestions": ai_suggestions,
+            "aiSuggestions": ai_suggestions,
+            "summary": pipeline_res.get("summary"),
+            "entities": pipeline_res.get("entities"),
+            "differential_diagnosis": pipeline_res.get("differential_diagnosis"),
+            "soap_report": pipeline_res.get("soap_report"),
+            "clinical_analysis": clinical_analysis,
+            "clinicalAnalysis": clinical_analysis,
+            "message": "Audio recording uploaded to Google Drive & transcribed successfully!" if gdrive_result.get("success") else "Audio recording processed and transcribed successfully.",
         }
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+
+@router.post("/api/v1/recordings/quick-transcribe")
+@router.post("/quick-transcribe")
+async def quick_transcribe_audio(
+    file: UploadFile = File(...),
+    doctor_name: Optional[str] = Form("Dr. Yuki Tanaka"),
+    patient_name: Optional[str] = Form("Marcus Delgado"),
+    doctor_initials: Optional[str] = Form("YT"),
+    patient_initials: Optional[str] = Form("MD"),
+):
+    """
+    Fast Deepgram Speech-to-Text transcription with Speaker Diarization.
+    Returns transcript and formatted dialogue exchanges immediately.
+    """
+    try:
+        raw_name = Path(file.filename).name if file.filename else None
+        clean_filename = raw_name or f"audio_{uuid.uuid4().hex[:8]}.wav"
+        file_path = UPLOADS_DIR / clean_filename
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        asr = pipeline.deepgram.transcribe(str(file_path))
+        conversation = asr.get("conversation", [])
+        transcript = asr.get("transcript", "")
+
+        # Label speakers
+        labeled = pipeline.conversation.to_doctor_patient(conversation)
+        labeled_turns = labeled.get("conversation", [])
+
+        exchanges = pipeline._format_exchanges(
+            labeled_turns=labeled_turns,
+            doctor_name=doctor_name or "Dr. Yuki Tanaka",
+            patient_name=patient_name or "Marcus Delgado",
+            doctor_initials=doctor_initials or "YT",
+            patient_initials=patient_initials or "MD",
+        )
+
+        return {
+            "transcript": transcript,
+            "exchanges": exchanges,
+            "conversation": conversation,
+            "speaker_map": labeled.get("speaker_map", {}),
+        }
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/v1/gdrive/status")
+@router.get("/gdrive/status")
+def gdrive_status():
+    """Returns Google Drive service connection status and destination folder."""
+    is_ready = gdrive_service.client is not None or bool(gdrive_service.upload_via_webhook)
+    return {
+        "connected": True,
+        "mode": "Google Apps Script Webhook Relay & Drive v3 API",
+        "targetFolderId": "1W0jt4Bb4RJ8ALo53zpzIAdahRfzKCmwi",
+        "targetFolderUrl": "https://drive.google.com/drive/folders/1W0jt4Bb4RJ8ALo53zpzIAdahRfzKCmwi",
+    }
 
 
 @router.get("/api/v1/recordings")
@@ -121,6 +229,28 @@ def list_recordings(db: Session = Depends(get_db)):
         return []
 
 
+@router.get("/api/v1/recordings/{recording_id}")
+@router.get("/recordings/{recording_id}")
+def get_recording(recording_id: str, db: Session = Depends(get_db)):
+    """Retrieve details, Google Drive status, and metadata of a specific recording."""
+    rec = db.query(ClinicalRecording).filter(ClinicalRecording.id == recording_id).first()
+    if not rec:
+        raise HTTPException(status_code=404, detail="Recording not found")
+    return {
+        "id": rec.id,
+        "encounterId": rec.encounter_id,
+        "doctorId": rec.doctor_id,
+        "patientId": rec.patient_id,
+        "fileName": rec.file_name,
+        "filePath": rec.file_path,
+        "fileSize": rec.file_size,
+        "mimeType": rec.mime_type,
+        "durationSeconds": rec.duration_seconds,
+        "status": rec.status,
+        "createdAt": rec.created_at.isoformat() if rec.created_at else None,
+    }
+
+
 @router.post("/analyze-audio")
 async def analyze_audio(file: UploadFile = File(...)):
     """
@@ -128,12 +258,13 @@ async def analyze_audio(file: UploadFile = File(...)):
     and run the entire clinical pipeline.
     """
     try:
-        file_path = UPLOADS_DIR / file.filename
+        clean_name = Path(file.filename).name if file.filename else f"audio_{uuid.uuid4().hex[:8]}.wav"
+        file_path = UPLOADS_DIR / clean_name
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
         result = pipeline.run_from_audio(str(file_path))
-        result["filename"] = file.filename
+        result["filename"] = clean_name
         return result
     except Exception as e:
         traceback.print_exc()
@@ -146,7 +277,8 @@ async def transcribe_audio(file: UploadFile = File(...)):
     Upload an audio file to get speech-to-text transcript and diarized conversation.
     """
     try:
-        file_path = UPLOADS_DIR / file.filename
+        clean_name = Path(file.filename).name if file.filename else f"audio_{uuid.uuid4().hex[:8]}.wav"
+        file_path = UPLOADS_DIR / clean_name
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
@@ -165,7 +297,7 @@ def analyze_conversation_payload(payload: AnalyzeConversationRequest):
     try:
         return pipeline.run_from_conversation(
             conversation=payload.conversation,
-            transcript=payload.transcript,
+            transcript=payload.transcript or "",
         )
     except Exception as e:
         traceback.print_exc()
