@@ -162,8 +162,9 @@ venv.bak/
 # Service Account Json file For accessing the Google Drive
 service_account.json
 *.json
-# Config file For settings
-config.py
+
+# Config File for settings
+/app/core/config.py
 
 # Spyder project settings
 .spyderproject
