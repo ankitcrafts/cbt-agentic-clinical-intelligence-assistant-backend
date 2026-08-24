@@ -1,7 +1,6 @@
-import json
 import sys
-import traceback
 from pathlib import Path
+from contextlib import asynccontextmanager
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -9,70 +8,61 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from app.services.pipeline_service import ClinicalPipeline
+from app.core.database import init_db
+from app.api.routes import router as api_router
+from app.api.auth import router as auth_router
 
-app = FastAPI(title="Clinical Intelligence Pipeline")
-pipeline = ClinicalPipeline()
 
-AUDIO_PATH = "/Users/durgeshwarpratapsingh/Desktop/ISB_project/app/uploads/WhatsApp Audio 2026-08-13 at 18.50.16.mpeg"
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize PostgreSQL tables and seed demo accounts on startup
+    init_db()
+    yield
+
+
+app = FastAPI(
+    title="ClinIQ Clinical Intelligence Pipeline & Auth API",
+    description="Agentic Clinical Assistant Backend with PostgreSQL Authentication, Gmail OTP Delivery, Speech-to-Text, and Clinical Decision Support.",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+# Enable CORS for frontend integration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Register API routes
+app.include_router(auth_router)
+app.include_router(api_router)
 
 
 @app.get("/")
 def home():
     return {
-        "message": "Clinical pipeline running",
-        "steps": [
-            "1. conversation transcription",
-            "2. doctor-patient conversion",
-            "3. conversation summary",
-            "4. medical entity extraction",
-            "5. differential diagnosis",
-            "6. rag (next)",
-        ],
+        "status": "online",
+        "service": "ClinIQ Clinical Intelligence & Authentication API",
+        "database": "PostgreSQL (cliniq_db)",
+        "authentication": {
+            "send_otp": "POST /api/auth/send-otp",
+            "verify_otp": "POST /api/auth/verify-otp",
+            "current_user": "GET /api/auth/me",
+            "list_users": "GET /api/auth/users",
+        },
+        "roles_supported": ["ADMIN", "DOCTOR", "PATIENT"],
     }
-
-
-@app.get("/transcribe")
-def transcribe():
-    try:
-        return pipeline.deepgram.transcribe(AUDIO_PATH)
-    except Exception as e:
-        traceback.print_exc()
-        return {"status": "error", "message": str(e)}
-
-
-@app.get("/analyze")
-def analyze():
-    try:
-        return pipeline.run_from_audio(AUDIO_PATH)
-    except Exception as e:
-        traceback.print_exc()
-        return {"status": "error", "message": str(e)}
-
-
-@app.get("/analyze-conversation")
-def analyze_saved_conversation():
-    try:
-        output_dir = Path("output")
-        files = sorted(output_dir.glob("*_conversation.json"))
-        if not files:
-            return {"status": "error", "message": "No conversation JSON found in output/"}
-        latest = files[-1]
-        with open(latest, encoding="utf-8") as f:
-            conversation = json.load(f)
-        result = pipeline.run_from_conversation(conversation)
-        result["source_file"] = str(latest)
-        return result
-    except Exception as e:
-        traceback.print_exc()
-        return {"status": "error", "message": str(e)}
 
 
 if __name__ == "__main__":
     uvicorn.run(
-        app,
+        "app.main:app",
         host="127.0.0.1",
         port=8000,
-        reload=False,
+        reload=True,
     )

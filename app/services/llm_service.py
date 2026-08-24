@@ -35,10 +35,24 @@ class LLMService:
                 api_key=settings["GROQ_API_KEY"] or None,
             )
 
-    def invoke(self, prompt):
+    def invoke(self, prompt) -> str:
         if self.llm is None:
             raise RuntimeError(
                 "GOOGLE_API_KEY is missing in app/.env. "
                 "Add it to run doctor-patient conversion, summary, and entity extraction."
             )
-        return self.llm.invoke(prompt).content
+        response = self.llm.invoke(prompt)
+        content = response.content
+        if isinstance(content, list):
+            text_parts = []
+            for part in content:
+                if isinstance(part, dict) and "text" in part:
+                    text_parts.append(part["text"])
+                elif isinstance(part, str):
+                    text_parts.append(part)
+                else:
+                    text_parts.append(str(part))
+            return "\n".join(text_parts)
+        elif isinstance(content, str):
+            return content
+        return str(content)

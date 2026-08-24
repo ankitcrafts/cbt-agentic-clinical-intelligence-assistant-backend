@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+python-dotenv
+deepgram-sdk
+pandas
+langchain
+langchain-google-genai
+langchain-groq
+langchain-openai
+langgraph
+pydantic
+python-multipart
+sqlalchemy
+psycopg2-binary
+pyjwt

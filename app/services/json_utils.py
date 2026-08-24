@@ -2,7 +2,9 @@ import json
 import re
 
 
-def parse_llm_json(text: str):
+def parse_llm_json(text):
+    if isinstance(text, (dict, list)):
+        return text
     cleaned = (text or "").strip()
     cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s*```$", "", cleaned)

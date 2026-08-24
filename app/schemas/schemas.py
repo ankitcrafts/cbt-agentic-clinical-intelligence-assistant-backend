@@ -31,3 +31,9 @@ class PipelineResponse(BaseModel):
     summary: dict[str, Any]
     entities: dict[str, Any]
     differential_diagnosis: list[dict[str, Any]]
+
+
+class AnalyzeConversationRequest(BaseModel):
+    conversation: list[dict[str, Any]]
+    transcript: Optional[str] = ""
+
