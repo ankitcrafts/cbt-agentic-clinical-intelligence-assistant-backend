@@ -1,3 +1,4 @@
+import json
 import shutil
 import traceback
 import uuid
@@ -8,8 +9,8 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models.models import ClinicalRecording
-from app.schemas.schemas import AnalyzeConversationRequest
+from app.models.models import ClinicalRecording, SOAPFeedback
+from app.schemas.schemas import AnalyzeConversationRequest, SOAPReframeRequest, SOAPSaveFeedbackRequest
 from app.services.pipeline_service import ClinicalPipeline
 from app.services.gdrive_service import gdrive_service
 
@@ -374,3 +375,101 @@ def demo_analyze_saved_conversation():
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/v1/soap/reframe")
+@router.post("/soap/reframe")
+def reframe_soap_section_endpoint(payload: SOAPReframeRequest):
+    """
+    AI Reframes a specific section of the SOAP report based on doctor's reasoning/instructions.
+    Also returns a patient-friendly summary translation if full_soap is provided.
+    """
+    try:
+        reframed_text = pipeline.summary.reframe_soap_section(
+            section=payload.section,
+            original_content=payload.original_content,
+            edit_reason=payload.edit_reason,
+        )
+        patient_summary = ""
+        if payload.full_soap:
+            updated_soap = dict(payload.full_soap)
+            if payload.section.lower() in updated_soap:
+                updated_soap[payload.section.lower()] = reframed_text
+            patient_summary = pipeline.summary.generate_patient_summary(updated_soap)
+
+        return {
+            "section": payload.section,
+            "reframed_text": reframed_text,
+            "patient_summary": patient_summary,
+        }
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to reframe SOAP section: {str(e)}")
+
+
+@router.post("/api/v1/soap/feedback")
+@router.post("/soap/feedback")
+def save_soap_feedback(payload: SOAPSaveFeedbackRequest, db: Session = Depends(get_db)):
+    """
+    Persists finalized SOAP report edits, additional reasoning, and training statements to database.
+    Used for fine-tuning future SOAP generation models and clinical auditing.
+    """
+    try:
+        patient_summary = payload.patient_summary
+        if not patient_summary and payload.edited_soap:
+            patient_summary = pipeline.summary.generate_patient_summary(payload.edited_soap)
+
+        feedback_entry = SOAPFeedback(
+            encounter_id=payload.encounter_id,
+            doctor_id=payload.doctor_id or "DOC-001",
+            patient_id=payload.patient_id or "P1245",
+            original_soap_json=json.dumps(payload.original_soap),
+            edited_soap_json=json.dumps(payload.edited_soap),
+            edit_reason=payload.edit_reason or "",
+            edited_section=payload.edited_section or "all",
+            patient_summary=patient_summary or "",
+            is_finalized=payload.is_finalized if payload.is_finalized is not None else True,
+        )
+        db.add(feedback_entry)
+        db.commit()
+        db.refresh(feedback_entry)
+
+        return {
+            "id": feedback_entry.id,
+            "status": "Saved",
+            "encounterId": feedback_entry.encounter_id,
+            "patientSummary": feedback_entry.patient_summary,
+            "message": "SOAP report edits & training feedback persisted to database successfully.",
+        }
+    except Exception as e:
+        db.rollback()
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to save SOAP feedback: {str(e)}")
+
+
+@router.get("/api/v1/soap/feedback/{encounter_id}")
+@router.get("/soap/feedback/{encounter_id}")
+def get_soap_feedback(encounter_id: str, db: Session = Depends(get_db)):
+    """
+    Retrieves stored SOAP feedback records for a specific encounter.
+    """
+    records = db.query(SOAPFeedback).filter(SOAPFeedback.encounter_id == encounter_id).order_by(SOAPFeedback.created_at.desc()).all()
+    if not records:
+        return []
+    return [
+        {
+            "id": r.id,
+            "encounterId": r.encounter_id,
+            "doctorId": r.doctor_id,
+            "patientId": r.patient_id,
+            "originalSoap": json.loads(r.original_soap_json) if r.original_soap_json else {},
+            "editedSoap": json.loads(r.edited_soap_json) if r.edited_soap_json else {},
+            "editReason": r.edit_reason,
+            "editedSection": r.edited_section,
+            "patientSummary": r.patient_summary,
+            "isFinalized": r.is_finalized,
+            "createdAt": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in records
+    ]
+

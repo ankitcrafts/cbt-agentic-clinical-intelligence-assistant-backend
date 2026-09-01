@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Boolean, DateTime, Integer
+from sqlalchemy import Column, String, Boolean, DateTime, Integer, Text
 from sqlalchemy.sql import func
 from app.core.database import Base
 
@@ -71,4 +71,21 @@ class ClinicalRecording(Base):
     recording_ended_at = Column(DateTime(timezone=True), nullable=True)
     status = Column(String(50), default="Uploaded")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class SOAPFeedback(Base):
+    __tablename__ = "soap_feedback"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    encounter_id = Column(String(100), nullable=False, index=True)
+    doctor_id = Column(String(100), nullable=True)
+    patient_id = Column(String(100), nullable=True)
+    original_soap_json = Column(Text, nullable=False)
+    edited_soap_json = Column(Text, nullable=False)
+    edit_reason = Column(Text, nullable=True)
+    edited_section = Column(String(50), default="all")  # subjective, objective, assessment, plan, all
+    patient_summary = Column(Text, nullable=True)
+    is_finalized = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
 

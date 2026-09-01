@@ -164,7 +164,7 @@ service_account.json
 *.json
 
 # Config File for settings
-/app/core/config.py
+app/core/config.py
 
 # Spyder project settings
 .spyderproject
