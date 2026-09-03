@@ -8,12 +8,14 @@ from app.schemas.auth import (
     SendOTPRequest,
     SendOTPResponse,
     VerifyOTPRequest,
+    UpdateProfileRequest,
     AuthResponse,
     UserProfileResponse,
 )
 from app.services.auth_service import (
     generate_and_send_otp,
     verify_otp_and_authenticate,
+    update_user_profile,
     get_current_user,
 )
 
@@ -60,8 +62,23 @@ def get_me_endpoint(current_user: User = Depends(get_current_user)):
         phone_number=current_user.phone_number,
         avatar_initials=current_user.get_initials(),
         is_active=current_user.is_active,
+        is_profile_completed=bool(current_user.full_name and current_user.full_name.strip()),
         created_at=current_user.created_at,
     )
+
+
+@router.put(
+    "/profile",
+    response_model=UserProfileResponse,
+    summary="Update current authenticated user profile",
+    description="Updates full name, department, specialization, designation, or phone number in PostgreSQL.",
+)
+def update_profile_endpoint(
+    req: UpdateProfileRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return update_user_profile(current_user=current_user, req=req, db=db)
 
 
 @router.get(

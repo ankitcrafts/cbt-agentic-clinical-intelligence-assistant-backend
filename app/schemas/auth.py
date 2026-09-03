@@ -46,10 +46,19 @@ class UserProfileResponse(BaseModel):
     phone_number: Optional[str] = None
     avatar_initials: Optional[str] = None
     is_active: bool = True
+    is_profile_completed: bool = False
     created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+
+class UpdateProfileRequest(BaseModel):
+    full_name: Optional[str] = Field(None, description="Full Name of the user")
+    department: Optional[str] = Field(None, description="Department (e.g. Cardiology)")
+    specialization: Optional[str] = Field(None, description="Specialization or Role Title")
+    designation: Optional[str] = Field(None, description="Designation")
+    phone_number: Optional[str] = Field(None, description="Contact Phone Number")
 
 
 class AuthResponse(BaseModel):
@@ -59,3 +68,4 @@ class AuthResponse(BaseModel):
     token_type: str = "bearer"
     user: UserProfileResponse
     target_dashboard_url: str
+    is_new_user: bool = False

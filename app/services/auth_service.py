@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.config import JWT_SECRET_KEY, JWT_ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, OTP_EXPIRE_MINUTES, SMTP_EMAIL, SMTP_PASSWORD
 from app.core.database import get_db
 from app.models.models import User, OTPVerification
-from app.schemas.auth import SendOTPRequest, SendOTPResponse, VerifyOTPRequest, AuthResponse, UserProfileResponse, UserRole
+from app.schemas.auth import SendOTPRequest, SendOTPResponse, VerifyOTPRequest, UpdateProfileRequest, AuthResponse, UserProfileResponse, UserRole
 from app.services.email_service import send_otp_email
 
 logger = logging.getLogger(__name__)
@@ -82,6 +82,18 @@ def generate_and_send_otp(req: SendOTPRequest, db: Session) -> SendOTPResponse:
     )
 
 
+def generate_unique_clinical_id(role: str, db: Session) -> str:
+    """Generate a clean, memorable clinical identifier (DOC-XXXX, PAT-XXXX, ADM-XXXX)."""
+    prefix = "DOC" if role == "DOCTOR" else ("PAT" if role == "PATIENT" else "ADM")
+    for _ in range(20):
+        random_num = secrets.randbelow(9000) + 1000  # 4-digit number (1000 - 9999)
+        candidate_id = f"{prefix}-{random_num}"
+        existing = db.query(User).filter(User.id == candidate_id).first()
+        if not existing:
+            return candidate_id
+    return f"{prefix}-{uuid.uuid4().hex[:6].upper()}"
+
+
 def verify_otp_and_authenticate(req: VerifyOTPRequest, db: Session) -> AuthResponse:
     """Verify submitted OTP code, provision/fetch User in PostgreSQL, and issue JWT."""
     email_clean = req.email.strip().lower()
@@ -130,26 +142,27 @@ def verify_otp_and_authenticate(req: VerifyOTPRequest, db: Session) -> AuthRespo
 
     # Find or create user in PostgreSQL
     user = db.query(User).filter(User.email == email_clean).first()
-    
+    is_new_user = False
+
     if not user:
-        # Create new user account permanently locked to active_role
-        default_name = req.full_name or (
-            "Hospital Administrator" if active_role == "ADMIN"
-            else ("Dr. Yuki Tanaka" if active_role == "DOCTOR" else "Patient User")
-        )
-        
+        is_new_user = True
+        user_id = generate_unique_clinical_id(active_role, db)
+        # For a brand new real user, full_name is either what was passed or None (prompting profile setup)
+        full_name = req.full_name.strip() if req.full_name and req.full_name.strip() else None
+
         user = User(
+            id=user_id,
             email=email_clean,
-            full_name=default_name,
+            full_name=full_name,
             role=active_role,
             department=req.department or ("Cardiology" if active_role == "DOCTOR" else None),
-            specialization=req.specialization or ("Senior Cardiologist" if active_role == "DOCTOR" else None),
+            specialization=req.specialization or ("Cardiologist" if active_role == "DOCTOR" else None),
             designation="System Admin" if active_role == "ADMIN" else ("Attending Physician" if active_role == "DOCTOR" else "Patient"),
         )
         db.add(user)
         db.commit()
         db.refresh(user)
-        logger.info(f"Created new {active_role} user: {email_clean}")
+        logger.info(f"Created new {active_role} user with ID {user.id}: {email_clean}")
     else:
         # Strict RBAC Check on existing user: DO NOT allow cross-role hijacking
         if user.role != active_role:
@@ -166,8 +179,8 @@ def verify_otp_and_authenticate(req: VerifyOTPRequest, db: Session) -> AuthRespo
             )
 
         # Update non-security metadata if provided
-        if req.full_name:
-            user.full_name = req.full_name
+        if req.full_name and req.full_name.strip():
+            user.full_name = req.full_name.strip()
         if req.department:
             user.department = req.department
         if req.specialization:
@@ -181,7 +194,7 @@ def verify_otp_and_authenticate(req: VerifyOTPRequest, db: Session) -> AuthRespo
             "sub": user.id,
             "email": user.email,
             "role": user.role,
-            "name": user.full_name,
+            "name": user.full_name or user.id,
         }
     )
 
@@ -192,6 +205,8 @@ def verify_otp_and_authenticate(req: VerifyOTPRequest, db: Session) -> AuthRespo
         "PATIENT": "/patient",
     }
     target_url = dashboard_urls.get(user.role, "/doctor")
+
+    is_profile_completed = bool(user.full_name and user.full_name.strip())
 
     user_profile = UserProfileResponse(
         id=user.id,
@@ -204,16 +219,50 @@ def verify_otp_and_authenticate(req: VerifyOTPRequest, db: Session) -> AuthRespo
         phone_number=user.phone_number,
         avatar_initials=user.get_initials(),
         is_active=user.is_active,
+        is_profile_completed=is_profile_completed,
         created_at=user.created_at,
     )
 
     return AuthResponse(
         success=True,
-        message=f"Welcome, {user.full_name or user.email}! Authentication successful.",
+        message=f"Welcome, {user.full_name or user.id}! Authentication successful.",
         access_token=access_token,
         token_type="bearer",
         user=user_profile,
         target_dashboard_url=target_url,
+        is_new_user=is_new_user,
+    )
+
+
+def update_user_profile(current_user: User, req: UpdateProfileRequest, db: Session) -> UserProfileResponse:
+    """Updates user profile information in PostgreSQL."""
+    if req.full_name is not None:
+        current_user.full_name = req.full_name.strip()
+    if req.department is not None:
+        current_user.department = req.department.strip()
+    if req.specialization is not None:
+        current_user.specialization = req.specialization.strip()
+    if req.designation is not None:
+        current_user.designation = req.designation.strip()
+    if req.phone_number is not None:
+        current_user.phone_number = req.phone_number.strip()
+
+    db.commit()
+    db.refresh(current_user)
+
+    return UserProfileResponse(
+        id=current_user.id,
+        email=current_user.email,
+        full_name=current_user.full_name,
+        role=current_user.role,
+        department=current_user.department,
+        specialization=current_user.specialization,
+        designation=current_user.designation,
+        phone_number=current_user.phone_number,
+        avatar_initials=current_user.get_initials(),
+        is_active=current_user.is_active,
+        is_profile_completed=bool(current_user.full_name and current_user.full_name.strip()),
+        created_at=current_user.created_at,
     )
 
 
