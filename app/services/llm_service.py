@@ -2,17 +2,24 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
 
-from app.core.config import load_settings
+from app.core.config import (
+    GOOGLE_API_KEY,
+    GROQ_API_KEY,
+    LLM_PROVIDER,
+    OPENROUTER_API_KEY,
+    OPENROUTER_MODEL,
+    load_settings,
+)
 
 
 class LLMService:
 
-    def __init__(self, provider="gemini"):
-        self.provider = provider
-        self.llm = None
+    def __init__(self, provider=None):
         settings = load_settings()
+        self.provider = provider or settings["LLM_PROVIDER"]
+        self.llm = None
 
-        if provider == "gemini":
+        if self.provider == "gemini":
             google_api_key = settings["GOOGLE_API_KEY"]
             if not google_api_key:
                 return
@@ -22,14 +29,15 @@ class LLMService:
                 temperature=0,
             )
 
-        elif provider == "openrouter":
+        elif self.provider == "openrouter":
             self.llm = ChatOpenAI(
                 base_url="https://openrouter.ai/api/v1",
                 api_key=settings["OPENROUTER_API_KEY"] or None,
-                model="deepseek/deepseek-chat",
+                model=settings["OPENROUTER_MODEL"],
+                temperature=0,
             )
 
-        elif provider == "groq":
+        elif self.provider == "groq":
             self.llm = ChatGroq(
                 model="llama-3.3-70b-versatile",
                 api_key=settings["GROQ_API_KEY"] or None,
@@ -38,7 +46,7 @@ class LLMService:
     def invoke(self, prompt):
         if self.llm is None:
             raise RuntimeError(
-                "GOOGLE_API_KEY is missing in app/.env. "
-                "Add it to run doctor-patient conversion, summary, and entity extraction."
+                f"LLM provider '{self.provider}' is not configured. "
+                "Check OPENROUTER_API_KEY or GOOGLE_API_KEY in app/.env."
             )
         return self.llm.invoke(prompt).content

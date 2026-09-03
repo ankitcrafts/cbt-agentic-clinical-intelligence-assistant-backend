@@ -1,45 +1,46 @@
-from app.services.conversation_service import ConversationService
-from app.services.deepgram_service import DeepgramService
-from app.services.diagnosis_service import DiagnosisService
-from app.services.entity_service import EntityService
-from app.services.summary_service import SummaryService
+from typing import Any, Optional
+
+from app.graph.clinical_graph import ClinicalGraph
+from app.rag.ingestion_service import IngestionService
 
 
 class ClinicalPipeline:
     """
-    1. Deepgram transcription (raw conversation)
-    2. Convert speakers into Doctor / Patient turns
-    3. Summarize the encounter
-    4. Extract medical entities
-    5. Differential diagnosis (RAG can refine this later)
+    Agentic clinical workflow backed by LangGraph + MemorySaver + RAG.
+
+    Steps:
+    1. Deepgram transcription (optional if conversation already exists)
+    2. Doctor / Patient role labeling
+    3. Encounter summary
+    4. Medical entity extraction
+    5. Guideline retrieval (RAG)
+    6. Evidence-based differential diagnosis ranking
     """
 
     def __init__(self):
-        self.deepgram = DeepgramService()
-        self.conversation = ConversationService()
-        self.summary = SummaryService()
-        self.entity = EntityService()
-        self.diagnosis = DiagnosisService()
+        self.graph = ClinicalGraph()
+        self.deepgram = self.graph.deepgram
+        self.ingestion = IngestionService()
 
-    def run_from_audio(self, audio_path: str):
-        asr = self.deepgram.transcribe(audio_path)
-        return self.run_from_conversation(
-            conversation=asr["conversation"],
-            transcript=asr.get("transcript", ""),
+    def ingest_guidelines(self) -> dict[str, Any]:
+        return self.ingestion.ingest()
+
+    def run_from_audio(self, audio_path: str, visit_id: Optional[str] = None) -> dict[str, Any]:
+        return self.graph.run_from_audio(audio_path, visit_id=visit_id)
+
+    def run_from_conversation(
+        self,
+        conversation: list[dict[str, Any]],
+        transcript: str = "",
+        visit_id: Optional[str] = None,
+        source_file: Optional[str] = None,
+    ) -> dict[str, Any]:
+        return self.graph.run_from_conversation(
+            conversation=conversation,
+            transcript=transcript,
+            visit_id=visit_id,
+            source_file=source_file,
         )
 
-    def run_from_conversation(self, conversation, transcript: str = ""):
-        labeled = self.conversation.to_doctor_patient(conversation)
-        summary = self.summary.summarize(labeled["conversation"])
-        entities = self.entity.extract(labeled["conversation"])
-        diagnosis = self.diagnosis.differential_diagnosis(summary, entities)
-
-        return {
-            "transcript": transcript,
-            "conversation": conversation,
-            "doctor_patient_conversation": labeled["conversation"],
-            "speaker_map": labeled["speaker_map"],
-            "summary": summary,
-            "entities": entities,
-            "differential_diagnosis": diagnosis.get("differential_diagnosis", diagnosis),
-        }
+    def get_visit_state(self, visit_id: str) -> Optional[dict[str, Any]]:
+        return self.graph.get_visit_state(visit_id)

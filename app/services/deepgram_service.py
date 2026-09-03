@@ -5,6 +5,7 @@ from datetime import datetime
 from deepgram import DeepgramClient
 
 from app.core.config import DEEPGRAM_API_KEY
+from app.core.tracing import traceable
 
 os.makedirs("output", exist_ok=True)
 
@@ -13,6 +14,7 @@ class DeepgramService:
     def __init__(self):
         self.client = DeepgramClient(api_key=DEEPGRAM_API_KEY)
 
+    @traceable(name="deepgram_transcribe", run_type="tool")
     def transcribe(self, file_path: str):
         with open(file_path, "rb") as f:
             audio = f.read()

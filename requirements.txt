@@ -1,0 +1,17 @@
+pandas
+langchain
+langgraph
+langchain-community
+langchain-text-splitters
+chromadb
+pypdf
+sentence-transformers
+faiss-cpu
+python-dotenv
+deepgram-sdk
+fastapi
+uvicorn
+langchain-openai
+langchain-google-genai
+langchain-groq
+langsmith

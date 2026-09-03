@@ -4,7 +4,7 @@ from app.services.llm_service import LLMService
 
 class EntityService:
     def __init__(self):
-        self.llm = LLMService("gemini")
+        self.llm = LLMService()
 
     def extract(self, conversation):
         prompt = f"""

@@ -4,7 +4,7 @@ from app.services.llm_service import LLMService
 
 class ConversationService:
     def __init__(self):
-        self.llm = LLMService("gemini")
+        self.llm = LLMService()
 
     def to_doctor_patient(self, conversation):
         prompt = f"""
