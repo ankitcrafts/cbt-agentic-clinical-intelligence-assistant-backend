@@ -64,3 +64,50 @@ class SOAPSaveFeedbackRequest(BaseModel):
     is_finalized: Optional[bool] = True
 
 
+class PatientConsultationSessionResponse(BaseModel):
+    id: str
+    patient_id: str
+    patient_name: Optional[str] = None
+    doctor_id: Optional[str] = None
+    doctor_name: Optional[str] = None
+    encounter_id: Optional[str] = None
+    session_number: int
+    session_title: str
+    appointment_date: Optional[str] = None
+    transcript: Optional[str] = ""
+    conversation: Optional[list[dict[str, Any]]] = []
+    ai_suggestions: Optional[list[dict[str, Any]]] = []
+    clinical_analysis: Optional[dict[str, Any]] = {}
+    soap_report: Optional[dict[str, Any]] = {}
+    audio_file_name: Optional[str] = None
+    duration_seconds: int = 0
+    gdrive_file_id: Optional[str] = None
+    gdrive_web_view_link: Optional[str] = None
+    consultation_mode: Optional[str] = "IN_PERSON"
+    audio_source: Optional[str] = "MIC"
+    status: str = "COMPLETED"
+    created_at: Optional[str] = None
+
+
+class CreateConsultationSessionRequest(BaseModel):
+    patient_id: str
+    patient_name: Optional[str] = None
+    doctor_id: Optional[str] = "DOC-001"
+    doctor_name: Optional[str] = "Dr. Yuki Tanaka"
+    encounter_id: Optional[str] = None
+    session_number: Optional[int] = None
+    session_title: Optional[str] = None
+    appointment_date: Optional[str] = None
+    transcript: Optional[str] = ""
+    conversation: Optional[list[dict[str, Any]]] = []
+    ai_suggestions: Optional[list[dict[str, Any]]] = []
+    clinical_analysis: Optional[dict[str, Any]] = {}
+    soap_report: Optional[dict[str, Any]] = {}
+    duration_seconds: Optional[int] = 0
+    consultation_mode: Optional[str] = "IN_PERSON"
+    audio_source: Optional[str] = "MIC"
+    status: Optional[str] = "COMPLETED"
+
+
+
+

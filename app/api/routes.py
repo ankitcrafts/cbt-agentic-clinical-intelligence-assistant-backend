@@ -9,10 +9,17 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models.models import ClinicalRecording, SOAPFeedback
-from app.schemas.schemas import AnalyzeConversationRequest, SOAPReframeRequest, SOAPSaveFeedbackRequest
+from app.models.models import ClinicalRecording, SOAPFeedback, PatientConsultationSession
+from app.schemas.schemas import (
+    AnalyzeConversationRequest,
+    SOAPReframeRequest,
+    SOAPSaveFeedbackRequest,
+    CreateConsultationSessionRequest,
+    PatientConsultationSessionResponse,
+)
 from app.services.pipeline_service import ClinicalPipeline
 from app.services.gdrive_service import gdrive_service
+
 
 router = APIRouter(tags=["Clinical Pipeline"])
 pipeline = ClinicalPipeline()
@@ -37,11 +44,13 @@ async def upload_recording(
     recording_started_at: Optional[str] = Form(None),
     recording_ended_at: Optional[str] = Form(None),
     duration_seconds: Optional[str] = Form("0"),
+    consultation_mode: Optional[str] = Form("IN_PERSON"),
+    audio_source: Optional[str] = Form("MIC"),
     auto_transcribe: Optional[bool] = Form(True),
     db: Session = Depends(get_db),
 ):
     """
-    Upload a clinical recording file from doctor consultation session.
+    Upload a clinical recording file from doctor consultation session (in-person or remote teleconsultation).
     1. Saves audio locally to app/uploads.
     2. Uploads audio to Google Drive shared folder (replacing AWS S3).
     3. Runs Deepgram Speech-to-Text with Speaker Diarization.
@@ -132,6 +141,8 @@ async def upload_recording(
             file_size=file_size,
             mime_type=file.content_type or "audio/wav",
             duration_seconds=dur_sec,
+            consultation_mode=consultation_mode or "IN_PERSON",
+            audio_source=audio_source or "MIC",
             status=recording_status,
         )
         try:
@@ -142,6 +153,70 @@ async def upload_recording(
             db.rollback()
             print(f"[Warning] Failed to persist recording metadata to DB: {db_err}")
 
+        # 4. Save or update PatientConsultationSession for encounter
+        session_id = None
+        try:
+            from datetime import datetime, timezone
+            clean_pid = patient_id if patient_id.startswith("#") else f"#{patient_id}"
+            existing_sessions = (
+                db.query(PatientConsultationSession)
+                .filter(
+                    (PatientConsultationSession.patient_id == clean_pid) |
+                    (PatientConsultationSession.patient_id == patient_id)
+                )
+                .order_by(PatientConsultationSession.session_number.desc())
+                .all()
+            )
+            existing_for_encounter = next((s for s in existing_sessions if s.encounter_id == encounter_id), None)
+            if existing_for_encounter:
+                existing_for_encounter.transcript = transcript
+                existing_for_encounter.conversation_json = json.dumps(exchanges)
+                existing_for_encounter.ai_suggestions_json = json.dumps(ai_suggestions)
+                existing_for_encounter.clinical_analysis_json = json.dumps(clinical_analysis)
+                existing_for_encounter.soap_report_json = json.dumps(pipeline_res.get("soap_report") or {})
+                existing_for_encounter.audio_file_name = clean_filename
+                existing_for_encounter.audio_file_path = str(file_path)
+                existing_for_encounter.duration_seconds = dur_sec
+                existing_for_encounter.consultation_mode = consultation_mode or "IN_PERSON"
+                existing_for_encounter.audio_source = audio_source or "MIC"
+                existing_for_encounter.gdrive_file_id = gdrive_result.get("file_id")
+                existing_for_encounter.gdrive_web_view_link = gdrive_result.get("web_view_link")
+                session_id = existing_for_encounter.id
+            else:
+                next_session_number = (existing_sessions[0].session_number + 1) if existing_sessions else 1
+                new_session = PatientConsultationSession(
+                    patient_id=clean_pid,
+                    patient_name=patient_name or "Patient",
+                    doctor_id=doctor_id or "DOC-001",
+                    doctor_name=doctor_name or "Dr. Yuki Tanaka",
+                    encounter_id=encounter_id,
+                    session_number=next_session_number,
+                    session_title=f"Session {next_session_number}: Consultation & Review",
+                    appointment_date=datetime.now(timezone.utc),
+                    transcript=transcript,
+                    conversation_json=json.dumps(exchanges),
+                    ai_suggestions_json=json.dumps(ai_suggestions),
+                    clinical_analysis_json=json.dumps(clinical_analysis),
+                    soap_report_json=json.dumps(pipeline_res.get("soap_report") or {}),
+                    audio_file_name=clean_filename,
+                    audio_file_path=str(file_path),
+                    duration_seconds=dur_sec,
+                    consultation_mode=consultation_mode or "IN_PERSON",
+                    audio_source=audio_source or "MIC",
+                    gdrive_file_id=gdrive_result.get("file_id"),
+                    gdrive_web_view_link=gdrive_result.get("web_view_link"),
+                    status="COMPLETED",
+                )
+                db.add(new_session)
+                db.commit()
+                db.refresh(new_session)
+                session_id = new_session.id
+            db.commit()
+        except Exception as sess_err:
+            db.rollback()
+            print(f"[Warning] Failed to save consultation session: {sess_err}")
+
+
         return {
             "id": recording_id,
             "status": recording_status,
@@ -151,6 +226,8 @@ async def upload_recording(
             "fileName": clean_filename,
             "fileSize": file_size,
             "durationSeconds": dur_sec,
+            "consultationMode": consultation_mode or "IN_PERSON",
+            "audioSource": audio_source or "MIC",
             "gdriveUploaded": gdrive_result.get("success", False),
             "gdriveFileId": gdrive_result.get("file_id"),
             "gdriveWebViewLink": gdrive_result.get("web_view_link"),
@@ -434,6 +511,21 @@ def save_soap_feedback(payload: SOAPSaveFeedbackRequest, db: Session = Depends(g
         db.commit()
         db.refresh(feedback_entry)
 
+        # Sync edited SOAP with PatientConsultationSession if available
+        try:
+            clean_pid = payload.patient_id if (payload.patient_id and payload.patient_id.startswith("#")) else f"#{payload.patient_id}"
+            sess = db.query(PatientConsultationSession).filter(
+                (PatientConsultationSession.encounter_id == payload.encounter_id) |
+                (PatientConsultationSession.patient_id == clean_pid) |
+                (PatientConsultationSession.patient_id == payload.patient_id)
+            ).order_by(PatientConsultationSession.created_at.desc()).first()
+            if sess and payload.edited_soap:
+                sess.soap_report_json = json.dumps(payload.edited_soap)
+                db.commit()
+        except Exception as sync_err:
+            print(f"[Warning] Failed to sync SOAP to session: {sync_err}")
+
+
         return {
             "id": feedback_entry.id,
             "status": "Saved",
@@ -472,4 +564,141 @@ def get_soap_feedback(encounter_id: str, db: Session = Depends(get_db)):
         }
         for r in records
     ]
+
+
+def _serialize_session(s: PatientConsultationSession) -> dict:
+    conversation = []
+    if s.conversation_json:
+        try:
+            conversation = json.loads(s.conversation_json)
+        except Exception:
+            conversation = []
+
+    ai_suggestions = []
+    if s.ai_suggestions_json:
+        try:
+            ai_suggestions = json.loads(s.ai_suggestions_json)
+        except Exception:
+            ai_suggestions = []
+
+    clinical_analysis = {}
+    if s.clinical_analysis_json:
+        try:
+            clinical_analysis = json.loads(s.clinical_analysis_json)
+        except Exception:
+            clinical_analysis = {}
+
+    soap_report = {}
+    if s.soap_report_json:
+        try:
+            soap_report = json.loads(s.soap_report_json)
+        except Exception:
+            soap_report = {}
+
+    return {
+        "id": s.id,
+        "patientId": s.patient_id,
+        "patientName": s.patient_name,
+        "doctorId": s.doctor_id,
+        "doctorName": s.doctor_name,
+        "encounterId": s.encounter_id,
+        "sessionNumber": s.session_number,
+        "sessionTitle": s.session_title,
+        "appointmentDate": s.appointment_date.isoformat() if s.appointment_date else None,
+        "transcript": s.transcript or "",
+        "conversation": conversation,
+        "aiSuggestions": ai_suggestions,
+        "ai_suggestions": ai_suggestions,
+        "clinicalAnalysis": clinical_analysis,
+        "clinical_analysis": clinical_analysis,
+        "soapReport": soap_report,
+        "soap_report": soap_report,
+        "audioFileName": s.audio_file_name,
+        "durationSeconds": s.duration_seconds or 0,
+        "gdriveFileId": s.gdrive_file_id,
+        "gdriveWebViewLink": s.gdrive_web_view_link,
+        "consultationMode": s.consultation_mode or "IN_PERSON",
+        "audioSource": s.audio_source or "MIC",
+        "status": s.status,
+        "createdAt": s.created_at.isoformat() if s.created_at else None,
+        "updatedAt": s.updated_at.isoformat() if s.updated_at else None,
+    }
+
+
+@router.get("/api/v1/patients/{patient_id}/sessions")
+@router.get("/patients/{patient_id}/sessions")
+def get_patient_consultation_sessions(patient_id: str, db: Session = Depends(get_db)):
+    """
+    Fetch all consultation sessions for a specific patient, ordered chronologically by session number.
+    """
+    clean_pid = patient_id if patient_id.startswith("#") else f"#{patient_id}"
+    sessions = (
+        db.query(PatientConsultationSession)
+        .filter(
+            (PatientConsultationSession.patient_id == clean_pid) |
+            (PatientConsultationSession.patient_id == patient_id)
+        )
+        .order_by(PatientConsultationSession.session_number.asc())
+        .all()
+    )
+    return [_serialize_session(s) for s in sessions]
+
+
+@router.get("/api/v1/sessions/{session_id}")
+@router.get("/sessions/{session_id}")
+def get_consultation_session_detail(session_id: str, db: Session = Depends(get_db)):
+    """
+    Fetch detailed payload for an individual consultation session.
+    """
+    session = db.query(PatientConsultationSession).filter(PatientConsultationSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Consultation session not found")
+    return _serialize_session(session)
+
+
+@router.post("/api/v1/sessions")
+@router.post("/sessions")
+def create_consultation_session(payload: CreateConsultationSessionRequest, db: Session = Depends(get_db)):
+    """
+    Create or manually persist a consultation session.
+    """
+    from datetime import datetime, timezone
+    clean_pid = payload.patient_id if payload.patient_id.startswith("#") else f"#{payload.patient_id}"
+    existing = (
+        db.query(PatientConsultationSession)
+        .filter(
+            (PatientConsultationSession.patient_id == clean_pid) |
+            (PatientConsultationSession.patient_id == payload.patient_id)
+        )
+        .order_by(PatientConsultationSession.session_number.desc())
+        .first()
+    )
+    sess_num = payload.session_number or ((existing.session_number + 1) if existing else 1)
+    sess_title = payload.session_title or f"Session {sess_num}: Consultation"
+
+    new_sess = PatientConsultationSession(
+        patient_id=clean_pid,
+        patient_name=payload.patient_name,
+        doctor_id=payload.doctor_id or "DOC-001",
+        doctor_name=payload.doctor_name or "Dr. Yuki Tanaka",
+        encounter_id=payload.encounter_id,
+        session_number=sess_num,
+        session_title=sess_title,
+        appointment_date=datetime.now(timezone.utc),
+        transcript=payload.transcript or "",
+        conversation_json=json.dumps(payload.conversation or []),
+        ai_suggestions_json=json.dumps(payload.ai_suggestions or []),
+        clinical_analysis_json=json.dumps(payload.clinical_analysis or {}),
+        soap_report_json=json.dumps(payload.soap_report or {}),
+        duration_seconds=payload.duration_seconds or 0,
+        consultation_mode=payload.consultation_mode or "IN_PERSON",
+        audio_source=payload.audio_source or "MIC",
+        status=payload.status or "COMPLETED",
+    )
+    db.add(new_sess)
+    db.commit()
+    db.refresh(new_sess)
+    return _serialize_session(new_sess)
+
+
 
