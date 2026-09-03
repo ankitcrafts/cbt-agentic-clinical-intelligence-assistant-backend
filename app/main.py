@@ -9,7 +9,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import uvicorn
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
 
 from app.core.tracing import setup_langsmith_tracing, tracing_status
 
@@ -21,6 +22,7 @@ app = FastAPI(title="Clinical Intelligence Agent")
 pipeline = ClinicalPipeline()
 
 AUDIO_PATH = "/Users/durgeshwarpratapsingh/Desktop/ISB_project/app/uploads/WhatsApp Audio 2026-08-13 at 18.50.16.mpeg"
+OUTPUT_DIR = Path("output")
 
 
 @app.on_event("startup")
@@ -43,6 +45,7 @@ def home():
             "4. medical entity extraction",
             "5. guideline retrieval (RAG)",
             "6. evidence-based differential diagnosis",
+            "7. save analysis report PDF + SOAP note PDF to output/",
         ],
     }
 
@@ -85,8 +88,7 @@ def analyze_saved_conversation(
     )
 ):
     try:
-        output_dir = Path("output")
-        files = sorted(output_dir.glob("*_conversation.json"))
+        files = sorted(OUTPUT_DIR.glob("*_conversation.json"))
         if not files:
             return {"status": "error", "message": "No conversation JSON found in output/"}
         latest = files[-1]
@@ -107,6 +109,47 @@ def analyze_saved_conversation(
     except Exception as e:
         traceback.print_exc()
         return {"status": "error", "message": str(e)}
+
+
+@app.get("/reports")
+def list_reports():
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    analysis = sorted(OUTPUT_DIR.glob("*_analysis_report.pdf"), reverse=True)
+    soap = sorted(OUTPUT_DIR.glob("*_soap_note.pdf"), reverse=True)
+    return {
+        "analysis_count": len(analysis),
+        "soap_count": len(soap),
+        "analysis_reports": [
+            {
+                "filename": path.name,
+                "path": str(path),
+                "download_url": f"/reports/{path.name}",
+            }
+            for path in analysis
+        ],
+        "soap_notes": [
+            {
+                "filename": path.name,
+                "path": str(path),
+                "download_url": f"/reports/{path.name}",
+            }
+            for path in soap
+        ],
+    }
+
+
+@app.get("/reports/{filename}")
+def download_report(filename: str):
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    path = OUTPUT_DIR / filename
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Report not found")
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        filename=filename,
+    )
 
 
 @app.get("/rag/ingest")

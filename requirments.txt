@@ -1,7 +1,0 @@
-pandas
-langchain
-langgraph
-python-dotenv
-deepgram-sdk
-fastapi
-uvicorn
