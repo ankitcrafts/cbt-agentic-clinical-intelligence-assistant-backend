@@ -2,26 +2,35 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
 
-from app.core.config import load_settings
+from app.core.config import (
+    GOOGLE_API_KEY,
+    GROQ_API_KEY,
+    LLM_PROVIDER,
+    OPENROUTER_API_KEY,
+    OPENROUTER_MODEL,
+    load_settings,
+)
 
 
 class LLMService:
 
-    def __init__(self, provider="gemini"):
-        self.provider = provider
+    def __init__(self, provider=None):
+        settings = load_settings()
+        self.provider = provider or settings.get("LLM_PROVIDER") or "gemini"
         self.llm = None
         self.fallback_llm = None
-        settings = load_settings()
 
         google_api_key = settings.get("GOOGLE_API_KEY")
         openrouter_key = settings.get("OPENROUTER_API_KEY")
+        groq_key = settings.get("GROQ_API_KEY")
+        openrouter_model = settings.get("OPENROUTER_MODEL") or "deepseek/deepseek-chat"
 
         # Initialize primary LLM
-        if provider == "gemini":
+        if self.provider == "gemini":
             if google_api_key:
                 try:
                     self.llm = ChatGoogleGenerativeAI(
-                        model="gemini-3.6-flash",
+                        model="gemini-2.0-flash",
                         google_api_key=google_api_key,
                         temperature=0.1,
                         max_retries=1,
@@ -37,23 +46,22 @@ class LLMService:
                     self.fallback_llm = ChatOpenAI(
                         base_url="https://openrouter.ai/api/v1",
                         api_key=openrouter_key,
-                        model="deepseek/deepseek-chat",
+                        model=openrouter_model,
                         timeout=45,
                     )
                 except Exception as fb_err:
                     print(f"[LLMService] Fallback OpenRouter init warning: {fb_err}")
 
-        elif provider == "openrouter":
+        elif self.provider == "openrouter":
             if openrouter_key:
                 self.llm = ChatOpenAI(
                     base_url="https://openrouter.ai/api/v1",
                     api_key=openrouter_key,
-                    model="deepseek/deepseek-chat",
+                    model=openrouter_model,
                     timeout=45,
                 )
 
-        elif provider == "groq":
-            groq_key = settings.get("GROQ_API_KEY")
+        elif self.provider == "groq":
             if groq_key:
                 self.llm = ChatGroq(
                     model="llama-3.3-70b-versatile",
@@ -62,7 +70,7 @@ class LLMService:
                 )
 
     def _extract_text(self, response) -> str:
-        content = response.content
+        content = getattr(response, "content", response)
         if isinstance(content, list):
             text_parts = []
             for part in content:
@@ -100,5 +108,8 @@ class LLMService:
             fb_response = self.fallback_llm.invoke(prompt)
             return self._extract_text(fb_response)
 
-        raise RuntimeError("No LLM provider initialized successfully")
+        raise RuntimeError(
+            f"LLM provider '{self.provider}' is not configured. "
+            "Check OPENROUTER_API_KEY or GOOGLE_API_KEY in environment variables."
+        )
 

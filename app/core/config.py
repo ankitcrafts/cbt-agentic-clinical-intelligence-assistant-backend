@@ -2,15 +2,13 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Project root:
-# app/core/config.py
-#   -> core
-#   -> app
-#   -> project root
-ROOT_ENV = Path(__file__).resolve().parent.parent.parent / ".env"
-
-# app/.env
+# Project roots & directories
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+ROOT_ENV = PROJECT_ROOT / ".env"
 APP_ENV = Path(__file__).resolve().parent.parent / ".env"
+
+GUIDELINES_DIR = PROJECT_ROOT / "Rag" / "data" / "guidelines"
+VECTORSTORE_DIR = PROJECT_ROOT / "Rag" / "vectorstore"
 
 
 def _clean_env(name: str, default: str = "") -> str:
@@ -50,6 +48,13 @@ def load_settings():
         "GOOGLE_API_KEY": _clean_env("GOOGLE_API_KEY"),
         "OPENROUTER_API_KEY": _clean_env("OPENROUTER_API_KEY"),
         "GROQ_API_KEY": _clean_env("GROQ_API_KEY"),
+        "LLM_PROVIDER": _clean_env("LLM_PROVIDER", "openrouter"),
+        "OPENROUTER_MODEL": _clean_env("OPENROUTER_MODEL", "deepseek/deepseek-chat"),
+
+        # LangSmith Tracing
+        "LANGSMITH_API_KEY": _clean_env("LANGSMITH_API_KEY"),
+        "LANGSMITH_PROJECT": _clean_env("LANGSMITH_PROJECT", "clinical-intelligence-agent"),
+        "LANGSMITH_TRACING": _clean_env("LANGSMITH_TRACING", "false"),
         
         # Database Settings
         "DATABASE_URL": db_url,
@@ -60,8 +65,6 @@ def load_settings():
         "POSTGRES_DB": pg_db,
         
         # JWT
-        # IMPORTANT:
-        # JWT Security Settings - Do not use a hardcoded production secret.
         "JWT_SECRET_KEY": _clean_env("JWT_SECRET_KEY"),
         "JWT_ALGORITHM": _clean_env("JWT_ALGORITHM", "HS256"),
         "ACCESS_TOKEN_EXPIRE_MINUTES": int(_clean_env("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")), # 24 hours
@@ -91,6 +94,13 @@ DEEPGRAM_API_KEY: str = str(settings["DEEPGRAM_API_KEY"])
 GOOGLE_API_KEY: str = str(settings["GOOGLE_API_KEY"])
 OPENROUTER_API_KEY: str = str(settings["OPENROUTER_API_KEY"])
 GROQ_API_KEY: str = str(settings["GROQ_API_KEY"])
+LLM_PROVIDER: str = str(settings["LLM_PROVIDER"])
+OPENROUTER_MODEL: str = str(settings["OPENROUTER_MODEL"])
+
+# LangSmith Tracing
+LANGSMITH_API_KEY: str = str(settings["LANGSMITH_API_KEY"])
+LANGSMITH_PROJECT: str = str(settings["LANGSMITH_PROJECT"])
+LANGSMITH_TRACING: str = str(settings["LANGSMITH_TRACING"])
 
 # Database
 DATABASE_URL: str = str(settings["DATABASE_URL"])
