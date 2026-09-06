@@ -8,8 +8,15 @@ from app.rag.ingestion_service import FAISS_INDEX_DIR, IngestionService
 class RetrievalService:
     def __init__(self):
         self.ingestion = IngestionService()
-        self.embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        self._embeddings = None
         self.vectorstore = None
+
+    @property
+    def embeddings(self):
+        if self._embeddings is None:
+            from langchain_community.embeddings import HuggingFaceEmbeddings
+            self._embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        return self._embeddings
 
     def ensure_index(self):
         if not self.ingestion.is_indexed():

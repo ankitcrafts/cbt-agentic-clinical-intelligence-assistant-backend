@@ -25,11 +25,18 @@ def _guideline_metadata(filename: str) -> dict:
 
 class IngestionService:
     def __init__(self):
-        self.embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        self._embeddings = None
         self.splitter = RecursiveCharacterTextSplitter(
             chunk_size=900,
             chunk_overlap=150,
         )
+
+    @property
+    def embeddings(self):
+        if self._embeddings is None:
+            from langchain_community.embeddings import HuggingFaceEmbeddings
+            self._embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        return self._embeddings
 
     @traceable(name="rag_ingest_guidelines", run_type="tool")
     def ingest(self) -> dict:
