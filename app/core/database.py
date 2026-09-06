@@ -77,6 +77,8 @@ def init_db():
         for col_name, col_type in [
             ("gdrive_file_id", "VARCHAR(255)"),
             ("gdrive_web_view_link", "VARCHAR(500)"),
+            ("consultation_mode", "VARCHAR(50) DEFAULT 'IN_PERSON'"),
+            ("audio_source", "VARCHAR(50) DEFAULT 'MIC'"),
         ]:
             try:
                 conn.execute(text(f"ALTER TABLE patient_consultation_sessions ADD COLUMN {col_name} {col_type}"))
