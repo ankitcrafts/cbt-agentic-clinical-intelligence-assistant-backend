@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
-from sqlalchemy import Column, String, Boolean, DateTime, Integer, Text
-from sqlalchemy.orm import Mapped
+from sqlalchemy import String, Boolean, DateTime, Integer, Text
+from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 from app.core.database import Base
 
@@ -10,19 +10,19 @@ from app.core.database import Base
 class User(Base):
     __tablename__ = "users"
 
-    id: Mapped[str] = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    email: Mapped[str] = Column(String(255), unique=True, index=True, nullable=False)
-    full_name: Mapped[Optional[str]] = Column(String(255), nullable=True)
-    role: Mapped[str] = Column(String(50), nullable=False, default="DOCTOR")  # ADMIN, DOCTOR, PATIENT
-    department: Mapped[Optional[str]] = Column(String(255), nullable=True)
-    specialization: Mapped[Optional[str]] = Column(String(255), nullable=True)
-    designation: Mapped[Optional[str]] = Column(String(255), nullable=True)
-    phone_number: Mapped[Optional[str]] = Column(String(50), nullable=True)
-    avatar_initials: Mapped[Optional[str]] = Column(String(10), nullable=True)
-    is_active: Mapped[bool] = Column(Boolean, default=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    role: Mapped[str] = mapped_column(String(50), nullable=False, default="DOCTOR")  # ADMIN, DOCTOR, PATIENT
+    department: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    specialization: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    designation: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    phone_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    avatar_initials: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     
-    created_at: Mapped[Optional[datetime]] = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[Optional[datetime]] = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     def get_initials(self) -> str:
         initials = self.avatar_initials
@@ -41,14 +41,14 @@ class User(Base):
 class OTPVerification(Base):
     __tablename__ = "otp_verifications"
 
-    id: Mapped[int] = Column(Integer, primary_key=True, autoincrement=True)
-    email: Mapped[str] = Column(String(255), index=True, nullable=False)
-    otp_code: Mapped[str] = Column(String(10), nullable=False)
-    role: Mapped[str] = Column(String(50), nullable=False)  # Target role (ADMIN, DOCTOR, PATIENT)
-    purpose: Mapped[str] = Column(String(50), default="SIGNIN")  # SIGNIN, SIGNUP
-    is_used: Mapped[bool] = Column(Boolean, default=False)
-    expires_at: Mapped[datetime] = Column(DateTime(timezone=True), nullable=False)
-    created_at: Mapped[Optional[datetime]] = Column(DateTime(timezone=True), server_default=func.now())
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    otp_code: Mapped[str] = mapped_column(String(10), nullable=False)
+    role: Mapped[str] = mapped_column(String(50), nullable=False)  # Target role (ADMIN, DOCTOR, PATIENT)
+    purpose: Mapped[str] = mapped_column(String(50), default="SIGNIN")  # SIGNIN, SIGNUP
+    is_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     def is_expired(self) -> bool:
         now = datetime.now(timezone.utc)
@@ -64,66 +64,66 @@ class OTPVerification(Base):
 class ClinicalRecording(Base):
     __tablename__ = "clinical_recordings"
 
-    id: Mapped[str] = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    encounter_id: Mapped[Optional[str]] = Column(String(100), nullable=True, index=True)
-    doctor_id: Mapped[Optional[str]] = Column(String(100), nullable=True)
-    patient_id: Mapped[Optional[str]] = Column(String(100), nullable=True)
-    file_name: Mapped[str] = Column(String(255), nullable=False)
-    file_path: Mapped[str] = Column(String(500), nullable=False)
-    file_size: Mapped[int] = Column(Integer, default=0)
-    mime_type: Mapped[str] = Column(String(100), default="audio/wav")
-    duration_seconds: Mapped[int] = Column(Integer, default=0)
-    recording_started_at: Mapped[Optional[datetime]] = Column(DateTime(timezone=True), nullable=True)
-    recording_ended_at: Mapped[Optional[datetime]] = Column(DateTime(timezone=True), nullable=True)
-    status: Mapped[str] = Column(String(50), default="Uploaded")
-    consultation_mode: Mapped[str] = Column(String(50), default="IN_PERSON")  # IN_PERSON, TELECONSULTATION, REMOTE_TEAMS, REMOTE_MEET, REMOTE_WHATSAPP, FILE_UPLOAD
-    audio_source: Mapped[str] = Column(String(50), default="MIC")  # MIC, SYSTEM_MIXED, FILE_UPLOAD
-    created_at: Mapped[Optional[datetime]] = Column(DateTime(timezone=True), server_default=func.now())
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    encounter_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    doctor_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    patient_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, default=0)
+    mime_type: Mapped[str] = mapped_column(String(100), default="audio/wav")
+    duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    recording_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    recording_ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(50), default="Uploaded")
+    consultation_mode: Mapped[str] = mapped_column(String(50), default="IN_PERSON")  # IN_PERSON, TELECONSULTATION, REMOTE_TEAMS, REMOTE_MEET, REMOTE_WHATSAPP, FILE_UPLOAD
+    audio_source: Mapped[str] = mapped_column(String(50), default="MIC")  # MIC, SYSTEM_MIXED, FILE_UPLOAD
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class SOAPFeedback(Base):
     __tablename__ = "soap_feedback"
 
-    id: Mapped[str] = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    encounter_id: Mapped[str] = Column(String(100), nullable=False, index=True)
-    doctor_id: Mapped[Optional[str]] = Column(String(100), nullable=True)
-    patient_id: Mapped[Optional[str]] = Column(String(100), nullable=True)
-    original_soap_json: Mapped[str] = Column(Text, nullable=False)
-    edited_soap_json: Mapped[str] = Column(Text, nullable=False)
-    edit_reason: Mapped[Optional[str]] = Column(Text, nullable=True)
-    edited_section: Mapped[str] = Column(String(50), default="all")  # subjective, objective, assessment, plan, all
-    patient_summary: Mapped[Optional[str]] = Column(Text, nullable=True)
-    is_finalized: Mapped[bool] = Column(Boolean, default=True)
-    created_at: Mapped[Optional[datetime]] = Column(DateTime(timezone=True), server_default=func.now())
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    encounter_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    doctor_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    patient_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    original_soap_json: Mapped[str] = mapped_column(Text, nullable=False)
+    edited_soap_json: Mapped[str] = mapped_column(Text, nullable=False)
+    edit_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    edited_section: Mapped[str] = mapped_column(String(50), default="all")  # subjective, objective, assessment, plan, all
+    patient_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_finalized: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class PatientConsultationSession(Base):
     __tablename__ = "patient_consultation_sessions"
 
-    id: Mapped[str] = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    patient_id: Mapped[str] = Column(String(100), nullable=False, index=True)
-    patient_name: Mapped[Optional[str]] = Column(String(255), nullable=True)
-    doctor_id: Mapped[Optional[str]] = Column(String(100), nullable=True)
-    doctor_name: Mapped[Optional[str]] = Column(String(255), nullable=True)
-    encounter_id: Mapped[Optional[str]] = Column(String(100), nullable=True, index=True)
-    session_number: Mapped[int] = Column(Integer, nullable=False, default=1)
-    session_title: Mapped[str] = Column(String(255), nullable=False, default="Session 1")
-    appointment_date: Mapped[Optional[datetime]] = Column(DateTime(timezone=True), nullable=True)
-    transcript: Mapped[Optional[str]] = Column(Text, nullable=True)
-    conversation_json: Mapped[Optional[str]] = Column(Text, nullable=True)  # JSON array of exchanges
-    ai_suggestions_json: Mapped[Optional[str]] = Column(Text, nullable=True)  # JSON array of suggestions
-    clinical_analysis_json: Mapped[Optional[str]] = Column(Text, nullable=True)  # JSON summary & findings
-    soap_report_json: Mapped[Optional[str]] = Column(Text, nullable=True)  # JSON soap note
-    audio_file_name: Mapped[Optional[str]] = Column(String(255), nullable=True)
-    audio_file_path: Mapped[Optional[str]] = Column(String(500), nullable=True)
-    duration_seconds: Mapped[int] = Column(Integer, default=0)
-    gdrive_file_id: Mapped[Optional[str]] = Column(String(255), nullable=True)
-    gdrive_web_view_link: Mapped[Optional[str]] = Column(String(500), nullable=True)
-    consultation_mode: Mapped[str] = Column(String(50), default="IN_PERSON")  # IN_PERSON, TELECONSULTATION, REMOTE_TEAMS, REMOTE_MEET, REMOTE_WHATSAPP, FILE_UPLOAD
-    audio_source: Mapped[str] = Column(String(50), default="MIC")  # MIC, SYSTEM_MIXED, FILE_UPLOAD
-    status: Mapped[str] = Column(String(50), default="COMPLETED")  # COMPLETED, IN_PROGRESS, ACTIVE
-    created_at: Mapped[Optional[datetime]] = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[Optional[datetime]] = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    patient_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    patient_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    doctor_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    doctor_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    encounter_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    session_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    session_title: Mapped[str] = mapped_column(String(255), nullable=False, default="Session 1")
+    appointment_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    transcript: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    conversation_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array of exchanges
+    ai_suggestions_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array of suggestions
+    clinical_analysis_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON summary & findings
+    soap_report_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON soap note
+    audio_file_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    audio_file_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    gdrive_file_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    gdrive_web_view_link: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    consultation_mode: Mapped[str] = mapped_column(String(50), default="IN_PERSON")  # IN_PERSON, TELECONSULTATION, REMOTE_TEAMS, REMOTE_MEET, REMOTE_WHATSAPP, FILE_UPLOAD
+    audio_source: Mapped[str] = mapped_column(String(50), default="MIC")  # MIC, SYSTEM_MIXED, FILE_UPLOAD
+    status: Mapped[str] = mapped_column(String(50), default="COMPLETED")  # COMPLETED, IN_PROGRESS, ACTIVE
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 

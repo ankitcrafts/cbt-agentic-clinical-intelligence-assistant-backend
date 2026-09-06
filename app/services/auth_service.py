@@ -1,3 +1,4 @@
+import uuid
 import secrets
 import logging
 from datetime import datetime, timedelta, timezone
@@ -32,10 +33,11 @@ def generate_and_send_otp(req: SendOTPRequest, db: Session) -> SendOTPResponse:
                 "DOCTOR": "Doctor / Clinician",
                 "PATIENT": "Patient",
             }
-            actual_role_label = role_labels.get(existing_user.role, existing_user.role)
+            user_role_str = str(existing_user.role)
+            actual_role_label = role_labels.get(user_role_str, user_role_str)
             target_role_label = role_labels.get(role_str, role_str)
             logger.warning(
-                f"RBAC Violation: {email_clean} ({existing_user.role}) attempted login as {role_str}"
+                f"RBAC Violation: {email_clean} ({user_role_str}) attempted login as {role_str}"
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -134,7 +136,7 @@ def verify_otp_and_authenticate(req: VerifyOTPRequest, db: Session) -> AuthRespo
             detail=f"Security Alert: OTP was requested for {otp_record.role} portal but verification was attempted for {target_role}.",
         )
 
-    active_role = target_role or otp_record.role
+    active_role = str(target_role or otp_record.role)
 
     # Mark OTP as used
     otp_record.is_used = True
@@ -171,8 +173,8 @@ def verify_otp_and_authenticate(req: VerifyOTPRequest, db: Session) -> AuthRespo
                 "DOCTOR": "Doctor / Clinician",
                 "PATIENT": "Patient",
             }
-            actual_role_label = role_labels.get(user.role, user.role)
-            target_role_label = role_labels.get(active_role, active_role)
+            actual_role_label = role_labels.get(str(user.role), str(user.role))
+            target_role_label = role_labels.get(str(active_role), str(active_role))
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Access Denied: Account '{email_clean}' is registered as an {actual_role_label}. You cannot sign in to the {target_role_label} portal.",
@@ -204,23 +206,23 @@ def verify_otp_and_authenticate(req: VerifyOTPRequest, db: Session) -> AuthRespo
         "DOCTOR": "/doctor",
         "PATIENT": "/patient",
     }
-    target_url = dashboard_urls.get(user.role, "/doctor")
+    target_url = dashboard_urls.get(str(user.role), "/doctor")
 
     is_profile_completed = bool(user.full_name and user.full_name.strip())
 
     user_profile = UserProfileResponse(
-        id=user.id,
-        email=user.email,
-        full_name=user.full_name,
-        role=user.role,
-        department=user.department,
-        specialization=user.specialization,
-        designation=user.designation,
-        phone_number=user.phone_number,
+        id=str(user.id),
+        email=str(user.email),
+        full_name=str(user.full_name) if user.full_name else None,
+        role=str(user.role),
+        department=str(user.department) if user.department else None,
+        specialization=str(user.specialization) if user.specialization else None,
+        designation=str(user.designation) if user.designation else None,
+        phone_number=str(user.phone_number) if user.phone_number else None,
         avatar_initials=user.get_initials(),
-        is_active=user.is_active,
+        is_active=bool(user.is_active),
         is_profile_completed=is_profile_completed,
-        created_at=user.created_at,
+        created_at=user.created_at if isinstance(user.created_at, datetime) else None,
     )
 
     return AuthResponse(
@@ -251,18 +253,18 @@ def update_user_profile(current_user: User, req: UpdateProfileRequest, db: Sessi
     db.refresh(current_user)
 
     return UserProfileResponse(
-        id=current_user.id,
-        email=current_user.email,
-        full_name=current_user.full_name,
-        role=current_user.role,
-        department=current_user.department,
-        specialization=current_user.specialization,
-        designation=current_user.designation,
-        phone_number=current_user.phone_number,
+        id=str(current_user.id),
+        email=str(current_user.email),
+        full_name=str(current_user.full_name) if current_user.full_name else None,
+        role=str(current_user.role),
+        department=str(current_user.department) if current_user.department else None,
+        specialization=str(current_user.specialization) if current_user.specialization else None,
+        designation=str(current_user.designation) if current_user.designation else None,
+        phone_number=str(current_user.phone_number) if current_user.phone_number else None,
         avatar_initials=current_user.get_initials(),
-        is_active=current_user.is_active,
+        is_active=bool(current_user.is_active),
         is_profile_completed=bool(current_user.full_name and current_user.full_name.strip()),
-        created_at=current_user.created_at,
+        created_at=current_user.created_at if isinstance(current_user.created_at, datetime) else None,
     )
 
 
@@ -291,8 +293,8 @@ def get_current_user(
     token = auth.credentials
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
-        user_id: str = payload.get("sub")
-        if user_id is None:
+        user_id: Optional[str] = payload.get("sub")
+        if not user_id:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token payload.",

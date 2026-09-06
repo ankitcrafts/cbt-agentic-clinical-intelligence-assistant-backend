@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
@@ -52,18 +53,18 @@ def verify_otp_endpoint(req: VerifyOTPRequest, db: Session = Depends(get_db)):
 )
 def get_me_endpoint(current_user: User = Depends(get_current_user)):
     return UserProfileResponse(
-        id=current_user.id,
-        email=current_user.email,
-        full_name=current_user.full_name,
-        role=current_user.role,
-        department=current_user.department,
-        specialization=current_user.specialization,
-        designation=current_user.designation,
-        phone_number=current_user.phone_number,
+        id=str(current_user.id),
+        email=str(current_user.email),
+        full_name=str(current_user.full_name) if current_user.full_name else None,
+        role=str(current_user.role),
+        department=str(current_user.department) if current_user.department else None,
+        specialization=str(current_user.specialization) if current_user.specialization else None,
+        designation=str(current_user.designation) if current_user.designation else None,
+        phone_number=str(current_user.phone_number) if current_user.phone_number else None,
         avatar_initials=current_user.get_initials(),
-        is_active=current_user.is_active,
+        is_active=bool(current_user.is_active),
         is_profile_completed=bool(current_user.full_name and current_user.full_name.strip()),
-        created_at=current_user.created_at,
+        created_at=current_user.created_at if isinstance(current_user.created_at, datetime) else None,
     )
 
 
@@ -97,17 +98,18 @@ def list_users_endpoint(
     users = query.all()
     return [
         UserProfileResponse(
-            id=u.id,
-            email=u.email,
-            full_name=u.full_name,
-            role=u.role,
-            department=u.department,
-            specialization=u.specialization,
-            designation=u.designation,
-            phone_number=u.phone_number,
+            id=str(u.id),
+            email=str(u.email),
+            full_name=str(u.full_name) if u.full_name else None,
+            role=str(u.role),
+            department=str(u.department) if u.department else None,
+            specialization=str(u.specialization) if u.specialization else None,
+            designation=str(u.designation) if u.designation else None,
+            phone_number=str(u.phone_number) if u.phone_number else None,
             avatar_initials=u.get_initials(),
-            is_active=u.is_active,
-            created_at=u.created_at,
+            is_active=bool(u.is_active),
+            is_profile_completed=bool(u.full_name and u.full_name.strip()),
+            created_at=u.created_at if isinstance(u.created_at, datetime) else None,
         )
         for u in users
     ]
