@@ -1,16 +1,16 @@
 {
-  "python.defaultInterpreterPath": ".venv/Scripts/python.exe",
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
   "python.analysis.extraPaths": [
-    ".",
-    "app",
-    ".venv/Lib/site-packages"
+    "${workspaceFolder}",
+    "${workspaceFolder}/app",
+    "${workspaceFolder}/.venv/Lib/site-packages"
   ],
   "python.autoComplete.extraPaths": [
-    ".",
-    "app",
-    ".venv/Lib/site-packages"
+    "${workspaceFolder}",
+    "${workspaceFolder}/app",
+    "${workspaceFolder}/.venv/Lib/site-packages"
   ],
   "python.analysis.autoImportCompletions": true,
   "python.terminal.useEnvFile": true,
-  "python.envFile": ".env"
+  "python.envFile": "${workspaceFolder}/.env"
 }

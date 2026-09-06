@@ -86,39 +86,36 @@ def load_settings():
 # ----------------------------------------------------------------------
 settings = load_settings()
 
-# ----------------------------------------------------------------------
-# Export configuration values
-# ----------------------------------------------------------------------
-
-DEEPGRAM_API_KEY = settings["DEEPGRAM_API_KEY"]
-GOOGLE_API_KEY = settings["GOOGLE_API_KEY"]
-OPENROUTER_API_KEY = settings["OPENROUTER_API_KEY"]
-GROQ_API_KEY = settings["GROQ_API_KEY"]
+# AI / API Keys
+DEEPGRAM_API_KEY: str = str(settings["DEEPGRAM_API_KEY"])
+GOOGLE_API_KEY: str = str(settings["GOOGLE_API_KEY"])
+OPENROUTER_API_KEY: str = str(settings["OPENROUTER_API_KEY"])
+GROQ_API_KEY: str = str(settings["GROQ_API_KEY"])
 
 # Database
-DATABASE_URL = settings["DATABASE_URL"]
-POSTGRES_USER = settings["POSTGRES_USER"]
-POSTGRES_PASSWORD = settings["POSTGRES_PASSWORD"]
-POSTGRES_HOST = settings["POSTGRES_HOST"]
-POSTGRES_PORT = settings["POSTGRES_PORT"]
-POSTGRES_DB = settings["POSTGRES_DB"]
+DATABASE_URL: str = str(settings["DATABASE_URL"])
+POSTGRES_USER: str = str(settings["POSTGRES_USER"])
+POSTGRES_PASSWORD: str = str(settings["POSTGRES_PASSWORD"])
+POSTGRES_HOST: str = str(settings["POSTGRES_HOST"])
+POSTGRES_PORT: str = str(settings["POSTGRES_PORT"])
+POSTGRES_DB: str = str(settings["POSTGRES_DB"])
 
 # JWT
-JWT_SECRET_KEY = settings["JWT_SECRET_KEY"]
-JWT_ALGORITHM = settings["JWT_ALGORITHM"]
-ACCESS_TOKEN_EXPIRE_MINUTES = settings["ACCESS_TOKEN_EXPIRE_MINUTES"]
-OTP_EXPIRE_MINUTES = settings["OTP_EXPIRE_MINUTES"]
+JWT_SECRET_KEY: str = str(settings["JWT_SECRET_KEY"])
+JWT_ALGORITHM: str = str(settings["JWT_ALGORITHM"])
+ACCESS_TOKEN_EXPIRE_MINUTES: int = int(settings["ACCESS_TOKEN_EXPIRE_MINUTES"])
+OTP_EXPIRE_MINUTES: int = int(settings["OTP_EXPIRE_MINUTES"])
 
 # SMTP
-SMTP_HOST = settings["SMTP_HOST"]
-SMTP_PORT = settings["SMTP_PORT"]
-SMTP_EMAIL = settings["SMTP_EMAIL"]
-SMTP_PASSWORD = settings["SMTP_PASSWORD"]
-SMTP_FROM_NAME = settings["SMTP_FROM_NAME"]
+SMTP_HOST: str = str(settings["SMTP_HOST"])
+SMTP_PORT: int = int(settings["SMTP_PORT"])
+SMTP_EMAIL: str = str(settings["SMTP_EMAIL"])
+SMTP_PASSWORD: str = str(settings["SMTP_PASSWORD"])
+SMTP_FROM_NAME: str = str(settings["SMTP_FROM_NAME"])
 
 # Google Drive
-GDRIVE_FOLDER_ID = settings["GDRIVE_FOLDER_ID"]
-GDRIVE_WEBHOOK_URL = settings["GDRIVE_WEBHOOK_URL"]
-GDRIVE_CREDENTIALS_FILE = settings["GDRIVE_CREDENTIALS_FILE"]
-GDRIVE_SERVICE_ACCOUNT_JSON = settings["GDRIVE_SERVICE_ACCOUNT_JSON"]
+GDRIVE_FOLDER_ID: str = str(settings["GDRIVE_FOLDER_ID"])
+GDRIVE_WEBHOOK_URL: str = str(settings["GDRIVE_WEBHOOK_URL"])
+GDRIVE_CREDENTIALS_FILE: str = str(settings["GDRIVE_CREDENTIALS_FILE"])
+GDRIVE_SERVICE_ACCOUNT_JSON: str = str(settings["GDRIVE_SERVICE_ACCOUNT_JSON"])
 

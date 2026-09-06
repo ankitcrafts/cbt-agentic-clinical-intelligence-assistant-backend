@@ -11,7 +11,7 @@ Base = declarative_base()
 
 def ensure_postgres_database():
     """Ensure the target PostgreSQL database exists before connecting."""
-    if not DATABASE_URL.startswith("postgresql"):
+    if not isinstance(DATABASE_URL, str) or not DATABASE_URL.startswith("postgresql"):
         return
 
     admin_url = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/postgres"
@@ -71,6 +71,18 @@ def init_db():
     import app.models.models  # Ensure models are imported for metadata registration
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables initialized successfully.")
+
+    # Lightweight migration for existing SQLite / Postgres tables
+    with engine.connect() as conn:
+        for col_name, col_type in [
+            ("gdrive_file_id", "VARCHAR(255)"),
+            ("gdrive_web_view_link", "VARCHAR(500)"),
+        ]:
+            try:
+                conn.execute(text(f"ALTER TABLE patient_consultation_sessions ADD COLUMN {col_name} {col_type}"))
+                conn.commit()
+            except Exception:
+                pass
     
     # Seed default demonstration users if table is empty
     from app.models.models import User, PatientConsultationSession

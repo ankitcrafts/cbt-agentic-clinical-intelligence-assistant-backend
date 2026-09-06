@@ -3,7 +3,7 @@ import shutil
 import traceback
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
@@ -157,17 +157,21 @@ async def upload_recording(
         session_id = None
         try:
             from datetime import datetime, timezone
-            clean_pid = patient_id if patient_id.startswith("#") else f"#{patient_id}"
+            eff_patient_id = patient_id or "P1245"
+            clean_pid = eff_patient_id if eff_patient_id.startswith("#") else f"#{eff_patient_id}"
             existing_sessions = (
                 db.query(PatientConsultationSession)
                 .filter(
                     (PatientConsultationSession.patient_id == clean_pid) |
-                    (PatientConsultationSession.patient_id == patient_id)
+                    (PatientConsultationSession.patient_id == eff_patient_id)
                 )
                 .order_by(PatientConsultationSession.session_number.desc())
                 .all()
             )
             existing_for_encounter = next((s for s in existing_sessions if s.encounter_id == encounter_id), None)
+            gdrive_file_id: Optional[str] = str(gdrive_result["file_id"]) if gdrive_result.get("file_id") else None
+            gdrive_web_view_link: Optional[str] = str(gdrive_result["web_view_link"]) if gdrive_result.get("web_view_link") else None
+
             if existing_for_encounter:
                 existing_for_encounter.transcript = transcript
                 existing_for_encounter.conversation_json = json.dumps(exchanges)
@@ -179,8 +183,8 @@ async def upload_recording(
                 existing_for_encounter.duration_seconds = dur_sec
                 existing_for_encounter.consultation_mode = consultation_mode or "IN_PERSON"
                 existing_for_encounter.audio_source = audio_source or "MIC"
-                existing_for_encounter.gdrive_file_id = gdrive_result.get("file_id")
-                existing_for_encounter.gdrive_web_view_link = gdrive_result.get("web_view_link")
+                existing_for_encounter.gdrive_file_id = gdrive_file_id
+                existing_for_encounter.gdrive_web_view_link = gdrive_web_view_link
                 session_id = existing_for_encounter.id
             else:
                 next_session_number = (existing_sessions[0].session_number + 1) if existing_sessions else 1
@@ -203,8 +207,8 @@ async def upload_recording(
                     duration_seconds=dur_sec,
                     consultation_mode=consultation_mode or "IN_PERSON",
                     audio_source=audio_source or "MIC",
-                    gdrive_file_id=gdrive_result.get("file_id"),
-                    gdrive_web_view_link=gdrive_result.get("web_view_link"),
+                    gdrive_file_id=gdrive_file_id,
+                    gdrive_web_view_link=gdrive_web_view_link,
                     status="COMPLETED",
                 )
                 db.add(new_session)
@@ -513,11 +517,12 @@ def save_soap_feedback(payload: SOAPSaveFeedbackRequest, db: Session = Depends(g
 
         # Sync edited SOAP with PatientConsultationSession if available
         try:
-            clean_pid = payload.patient_id if (payload.patient_id and payload.patient_id.startswith("#")) else f"#{payload.patient_id}"
+            eff_pid = payload.patient_id or "P1245"
+            clean_pid = eff_pid if eff_pid.startswith("#") else f"#{eff_pid}"
             sess = db.query(PatientConsultationSession).filter(
                 (PatientConsultationSession.encounter_id == payload.encounter_id) |
                 (PatientConsultationSession.patient_id == clean_pid) |
-                (PatientConsultationSession.patient_id == payload.patient_id)
+                (PatientConsultationSession.patient_id == eff_pid)
             ).order_by(PatientConsultationSession.created_at.desc()).first()
             if sess and payload.edited_soap:
                 sess.soap_report_json = json.dumps(payload.edited_soap)
@@ -631,12 +636,13 @@ def get_patient_consultation_sessions(patient_id: str, db: Session = Depends(get
     """
     Fetch all consultation sessions for a specific patient, ordered chronologically by session number.
     """
-    clean_pid = patient_id if patient_id.startswith("#") else f"#{patient_id}"
+    eff_pid = patient_id or "P1245"
+    clean_pid = eff_pid if eff_pid.startswith("#") else f"#{eff_pid}"
     sessions = (
         db.query(PatientConsultationSession)
         .filter(
             (PatientConsultationSession.patient_id == clean_pid) |
-            (PatientConsultationSession.patient_id == patient_id)
+            (PatientConsultationSession.patient_id == eff_pid)
         )
         .order_by(PatientConsultationSession.session_number.asc())
         .all()
@@ -663,12 +669,13 @@ def create_consultation_session(payload: CreateConsultationSessionRequest, db: S
     Create or manually persist a consultation session.
     """
     from datetime import datetime, timezone
-    clean_pid = payload.patient_id if payload.patient_id.startswith("#") else f"#{payload.patient_id}"
+    eff_pid = payload.patient_id or "P1245"
+    clean_pid = eff_pid if eff_pid.startswith("#") else f"#{eff_pid}"
     existing = (
         db.query(PatientConsultationSession)
         .filter(
             (PatientConsultationSession.patient_id == clean_pid) |
-            (PatientConsultationSession.patient_id == payload.patient_id)
+            (PatientConsultationSession.patient_id == eff_pid)
         )
         .order_by(PatientConsultationSession.session_number.desc())
         .first()
