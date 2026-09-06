@@ -73,16 +73,19 @@ def init_db():
     logger.info("Database tables initialized successfully.")
 
     # Lightweight migration for existing SQLite / Postgres tables
-    with engine.connect() as conn:
-        for col_name, col_type in [
-            ("gdrive_file_id", "VARCHAR(255)"),
-            ("gdrive_web_view_link", "VARCHAR(500)"),
-            ("consultation_mode", "VARCHAR(50) DEFAULT 'IN_PERSON'"),
-            ("audio_source", "VARCHAR(50) DEFAULT 'MIC'"),
-        ]:
+    for col_name, col_type in [
+        ("gdrive_file_id", "VARCHAR(255)"),
+        ("gdrive_web_view_link", "VARCHAR(500)"),
+        ("consultation_mode", "VARCHAR(50) DEFAULT 'IN_PERSON'"),
+        ("audio_source", "VARCHAR(50) DEFAULT 'MIC'"),
+    ]:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE patient_consultation_sessions ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
+        except Exception:
             try:
-                conn.execute(text(f"ALTER TABLE patient_consultation_sessions ADD COLUMN {col_name} {col_type}"))
-                conn.commit()
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE patient_consultation_sessions ADD COLUMN {col_name} {col_type}"))
             except Exception:
                 pass
     
