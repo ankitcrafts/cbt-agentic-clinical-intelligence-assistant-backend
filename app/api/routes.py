@@ -105,7 +105,7 @@ async def upload_recording(
                 print(f"[Warning] Pipeline error, performing direct Deepgram fallback: {pipe_err}")
                 traceback.print_exc()
                 try:
-                    asr = pipeline.deepgram.transcribe(str(file_path))
+                    asr = pipeline.deepgram.transcribe(file_path=str(file_path))
                     transcript = asr.get("transcript", "")
                     labeled = pipeline.conversation.to_doctor_patient(asr.get("conversation", []))
                     exchanges = pipeline._format_exchanges(

@@ -1,13 +1,20 @@
 import os
-from typing import Any, Optional
+from typing import Any, Callable, Optional, TypeVar, cast
+
+from langchain_core.runnables import RunnableConfig
 
 from app.core.config import load_settings
 
+F = TypeVar("F", bound=Callable[..., Any])
+
 try:
-    from langsmith import traceable
+    from langsmith import traceable as _langsmith_traceable
+
+    def traceable(*args: Any, **kwargs: Any) -> Any:
+        return _langsmith_traceable(*args, **kwargs)
 except ImportError:
-    def traceable(*args, **kwargs):
-        def decorator(func):
+    def traceable(*args: Any, **kwargs: Any) -> Any:
+        def decorator(func: F) -> F:
             return func
         return decorator if not args else decorator(args[0])
 
@@ -15,9 +22,9 @@ except ImportError:
 def setup_langsmith_tracing() -> dict[str, Any]:
     """Enable LangSmith tracing for LangChain, LangGraph, and @traceable spans."""
     settings = load_settings()
-    api_key = settings.get("LANGSMITH_API_KEY", "")
-    project = settings.get("LANGSMITH_PROJECT", "clinical-intelligence-agent")
-    enabled = settings.get("LANGSMITH_TRACING", "false").lower() == "true" and bool(api_key)
+    api_key = str(settings.get("LANGSMITH_API_KEY", ""))
+    project = str(settings.get("LANGSMITH_PROJECT", "clinical-intelligence-agent"))
+    enabled = str(settings.get("LANGSMITH_TRACING", "false")).lower() == "true" and bool(api_key)
 
     if not enabled:
         os.environ.pop("LANGCHAIN_TRACING_V2", None)
@@ -48,7 +55,7 @@ def build_run_config(
     source: str = "api",
     run_name: Optional[str] = None,
     extra_metadata: Optional[dict[str, Any]] = None,
-) -> dict[str, Any]:
+) -> RunnableConfig:
     metadata = {
         "visit_id": visit_id,
         "source": source,
@@ -68,7 +75,7 @@ def build_run_config(
 def tracing_status() -> dict[str, Any]:
     settings = load_settings()
     enabled = os.getenv("LANGCHAIN_TRACING_V2") == "true" and bool(settings.get("LANGSMITH_API_KEY"))
-    project = settings.get("LANGSMITH_PROJECT", "clinical-intelligence-agent")
+    project = str(settings.get("LANGSMITH_PROJECT", "clinical-intelligence-agent"))
     return {
         "tracing_enabled": enabled,
         "project": project,

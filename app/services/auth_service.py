@@ -174,7 +174,7 @@ def verify_otp_and_authenticate(req: VerifyOTPRequest, db: Session) -> AuthRespo
                 "PATIENT": "Patient",
             }
             actual_role_label = role_labels.get(str(user.role), str(user.role))
-            target_role_label = role_labels.get(str(active_role), str(active_role))
+            target_role_label = role_labels.get(active_role, active_role)
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Access Denied: Account '{email_clean}' is registered as an {actual_role_label}. You cannot sign in to the {target_role_label} portal.",

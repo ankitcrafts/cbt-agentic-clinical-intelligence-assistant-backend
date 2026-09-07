@@ -1,6 +1,7 @@
 import json
 import os
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 import requests
 
 from app.core.config import DEEPGRAM_API_KEY
@@ -14,7 +15,7 @@ class DeepgramService:
         self.api_key = DEEPGRAM_API_KEY
 
     @traceable(name="deepgram_transcribe", run_type="tool")
-    def transcribe(self, file_path: str):
+    def transcribe(self, file_path: str) -> Dict[str, Any]:
         with open(file_path, "rb") as f:
             audio = f.read()
 

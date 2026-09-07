@@ -1,6 +1,7 @@
 from typing import Any, Optional
 from uuid import uuid4
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
@@ -27,7 +28,7 @@ class ClinicalGraph:
         self.graph = self._build_graph()
 
     def _build_graph(self):
-        graph = StateGraph(ClinicalState)
+        graph = StateGraph(ClinicalState)  # type: ignore
 
         graph.add_node("transcribe", self._transcribe_node)
         graph.add_node("role_label", self._role_label_node)
@@ -58,7 +59,7 @@ class ClinicalGraph:
         return "transcribe"
 
     def _transcribe_node(self, state: ClinicalState) -> dict[str, Any]:
-        asr = self.deepgram.transcribe(state["audio_path"])
+        asr = self.deepgram.transcribe(file_path=state["audio_path"])
         return {
             "transcript": asr.get("transcript", ""),
             "conversation": asr["conversation"],
@@ -114,7 +115,7 @@ class ClinicalGraph:
         visit_id: str,
         source: str = "api",
         extra_metadata: Optional[dict[str, Any]] = None,
-    ) -> dict[str, Any]:
+    ) -> RunnableConfig:
         return build_run_config(
             visit_id,
             source=source,
@@ -128,8 +129,12 @@ class ClinicalGraph:
         source: str = "analyze_audio",
     ) -> dict[str, Any]:
         resolved_visit_id = self._resolve_visit_id(visit_id)
+        initial_state: ClinicalState = {
+            "audio_path": audio_path,
+            "visit_id": resolved_visit_id,
+        }
         result = self.graph.invoke(
-            {"audio_path": audio_path, "visit_id": resolved_visit_id},
+            initial_state,
             config=self._run_config(
                 resolved_visit_id,
                 source=source,
@@ -171,7 +176,7 @@ class ClinicalGraph:
             return None
         return self._format_result(snapshot.values, visit_id)
 
-    def _format_result(self, state: ClinicalState, visit_id: str) -> dict[str, Any]:
+    def _format_result(self, state: dict[str, Any] | ClinicalState, visit_id: str) -> dict[str, Any]:
         return {
             "visit_id": state.get("visit_id") or visit_id,
             "thread_id": visit_id,

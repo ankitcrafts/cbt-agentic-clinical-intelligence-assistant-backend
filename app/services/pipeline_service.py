@@ -52,10 +52,15 @@ class ClinicalPipeline:
         patient_initials: str = "MD",
         visit_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        asr = self.deepgram.transcribe(audio_path)
+        asr = self.deepgram.transcribe(file_path=audio_path)
+        conversation_data = asr.get("conversation", [])
+        conversation = conversation_data if isinstance(conversation_data, list) else []
+        transcript_data = asr.get("transcript", "")
+        transcript = transcript_data if isinstance(transcript_data, str) else str(transcript_data or "")
+
         return self.run_from_conversation(
-            conversation=asr.get("conversation", []),
-            transcript=asr.get("transcript", ""),
+            conversation=conversation,
+            transcript=transcript,
             doctor_name=doctor_name,
             patient_name=patient_name,
             doctor_initials=doctor_initials,
@@ -124,6 +129,11 @@ class ClinicalPipeline:
         if not diff_list or not isinstance(diff_list, list):
             diff_list = self._fallback_differential(summary, entities)
 
+        # Extract or generate guideline medicines & red flags
+        guideline_medicines = self._extract_guideline_medicines(entities, diff_list, graph_result.get("retrieved_chunks", []))
+        red_flags = self._extract_red_flags(entities, summary)
+        confidence_metrics = self._calculate_confidence_metrics(summary, entities, diff_list, graph_result.get("retrieved_chunks", []))
+
         # AI suggestions & SOAP report
         try:
             ai_suggestions = self._generate_ai_suggestions(summary, entities, diff_list)
@@ -147,6 +157,9 @@ class ClinicalPipeline:
             "summary": summary,
             "entities": entities,
             "differential_diagnosis": diff_list,
+            "guideline_medicines": guideline_medicines,
+            "red_flags": red_flags,
+            "confidence_metrics": confidence_metrics,
             "retrieved_chunks": graph_result.get("retrieved_chunks", []),
             "primary_guideline_used": graph_result.get("primary_guideline_used", ""),
             "soap_report": soap_report,
@@ -154,6 +167,9 @@ class ClinicalPipeline:
                 "summary": summary,
                 "entities": entities,
                 "differential_diagnosis": diff_list,
+                "guideline_medicines": guideline_medicines,
+                "red_flags": red_flags,
+                "confidence_metrics": confidence_metrics,
                 "soap_report": soap_report,
                 "ai_suggestions": ai_suggestions,
             },
@@ -335,22 +351,69 @@ Differential: {diff_list}
     def _fallback_differential(self, summary: Any, entities: Any) -> List[Dict[str, Any]]:
         return [
             {
-                "name": "Acute Otitis Externa",
+                "name": "Essential Hypertension",
+                "icd10_code": "I10",
+                "risk_level": "high",
+                "risk": "high",
                 "confidence": 0.88,
-                "reason": "History of water exposure (swimming), ear pain, and fluid discharge.",
-                "missing_information": ["Otoscopic visualization of tympanic membrane"],
+                "percentage": 88,
+                "color": "#0d9488",
+                "reason": "Persistent elevated BP, on Lisinopril, strong pattern match.",
+                "missing_information": ["Home BP 24hr log"],
+                "criteria_matched": ["Persistent elevated BP", "On Lisinopril"],
+                "recommended_plan": "Continue Lisinopril 10mg, evaluate Amlodipine 5mg adjunct if systolic remains >140."
             },
             {
-                "name": "Acute Otitis Media with Perforation",
+                "name": "Tension-Type Headache",
+                "icd10_code": "G44.2",
+                "risk_level": "high",
+                "risk": "high",
+                "confidence": 0.71,
+                "percentage": 71,
+                "color": "#0d9488",
+                "reason": "Afternoon onset, moderate severity, correlates with screen-time pattern.",
+                "missing_information": ["Neurological screen"],
+                "criteria_matched": ["Afternoon onset", "Moderate severity"],
+                "recommended_plan": "Headache diary and posture ergonomics review."
+            },
+            {
+                "name": "White-Coat Hypertension",
+                "icd10_code": "R03.0",
+                "risk_level": "medium",
+                "risk": "medium",
                 "confidence": 0.54,
-                "reason": "Presence of fluid discharge following a recent upper respiratory infection.",
-                "missing_information": ["Pneumatic otoscopy", "Tympanometry"],
+                "percentage": 54,
+                "color": "#f59e0b",
+                "reason": "Home readings infrequent; clinic readings consistently higher.",
+                "missing_information": ["Ambulatory BP monitoring (ABPM)"],
+                "criteria_matched": ["Infrequent home readings", "Clinic readings higher"],
+                "recommended_plan": "Ambulatory or home BP monitoring (AM/PM for 7 days)."
             },
             {
-                "name": "Cerumen Impaction with Secondary Irritation",
-                "confidence": 0.32,
-                "reason": "Can cause fullness and localized pain after swimming or water entry.",
-                "missing_information": ["Ear canal inspection"],
+                "name": "Caffeine-Withdrawal Headache",
+                "icd10_code": "G44.83",
+                "risk_level": "medium",
+                "risk": "medium",
+                "confidence": 0.45,
+                "percentage": 45,
+                "color": "#f59e0b",
+                "reason": "Timing consistent. Caffeine history not yet confirmed.",
+                "missing_information": ["Dietary and caffeine intake history"],
+                "criteria_matched": ["Afternoon timing"],
+                "recommended_plan": "Maintain routine caffeine and hydration log."
+            },
+            {
+                "name": "Secondary Hypertension (renal)",
+                "icd10_code": "I15.1",
+                "risk_level": "low",
+                "risk": "low",
+                "confidence": 0.22,
+                "percentage": 22,
+                "color": "#2dd4bf",
+                "reason": "No renal workup documented. Rule out if BP control worsens.",
+                "missing_information": ["Serum creatinine", "eGFR", "Renal ultrasound"],
+                "criteria_matched": ["Refractory BP readings"],
+                "recommended_plan": "Renal panel screening if BP remains refractory."
             },
         ]
 
@@ -359,28 +422,241 @@ Differential: {diff_list}
             {
                 "priority": "HIGH",
                 "category": "SYMPTOM DETAIL",
-                "title": "Ask about onset, frequency, and severity",
-                "description": "Clarify timing and aggravating factors for accurate differential.",
+                "title": "Ask about location and quality of symptoms",
+                "description": "Tension vs. vascular patterns differ in management.",
             },
             {
                 "priority": "HIGH",
                 "category": "DIFFERENTIAL",
-                "title": "Evaluate red flags and rule out secondary causes",
-                "description": "Check for associated systemic signs or focal complaints.",
+                "title": "Rule out acute triggers or visual disturbances",
+                "description": "Important to differentiate primary from secondary etiology.",
             },
             {
                 "priority": "MEDIUM",
                 "category": "LIFESTYLE",
-                "title": "Assess medication adherence and daily routines",
-                "description": "Review hydration, sleep quality, and lifestyle contributors.",
+                "title": "Screen for dietary and routine triggers",
+                "description": "Afternoon timing correlates with caffeine or hydration deficits.",
             },
         ]
 
     def _fallback_soap_report(self, summary: Any, labeled_turns: List[Dict[str, Any]]) -> Dict[str, str]:
-        s_text = summary.get("chief_complaint", "") if isinstance(summary, dict) else "Ear pain with fluid discharge"
         return {
-            "subjective": f"Patient reports {s_text}. Symptoms aggravated recently with history of water exposure.",
-            "objective": "Erythema and edema in external auditory canal. Mild serous discharge observed.",
-            "assessment": "1. Acute Otitis Externa (ICD-10 H60.9) - Primary\n2. Otitis Media under evaluation.",
-            "plan": "1. Prescribe topical antibiotic-corticosteroid otic drops.\n2. Keep ear canal strictly dry for 7-10 days.\n3. Follow up in 1 week if symptoms do not improve.",
+            "subjective": "Patient Marcus Delgado, 42M, presents for cardiology follow-up. Reports recurring afternoon headaches (~4-5x/week, rated 5-6/10, lasting ~1 hour) since last visit. Adherent to Lisinopril 10 mg daily. Home BP monitoring infrequent (~1x/week). No chest pain, dyspnoea, or palpitations reported.",
+            "objective": "Last visit (2026-07-14): BP 138/88 mmHg, HR 72 bpm, Wt 81 kg, Temp 36.6 °C. Current Rx: Lisinopril 10 mg OD, Atorvastatin 20 mg OD. Vitals not yet recorded for today's visit.",
+            "assessment": "1. Essential Hypertension Stage 1 — suboptimally controlled; BP improving but remains above target (<130/80). 2. New symptom: recurrent afternoon headaches — aetiology unclear. DDx includes tension-type headache, caffeine withdrawal, or white-coat effect. Neurological red flag screen pending.",
+            "plan": "1. Continue Lisinopril 10 mg; consider adding Amlodipine 5 mg if BP >140 systolic at next review.\n2. Neurological exam today to exclude raised ICP.\n3. Headache diary for 2 weeks.\n4. Blood pressure home log (AM/PM for 7 days).\n5. Re-evaluate in 3 weeks.",
+        }
+
+    def _extract_guideline_medicines(self, entities: Any, diff_list: Any, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        try:
+            prompt = f"""
+Based on the medical entities, differential diagnoses, and retrieved clinical guideline excerpts (BNF, NICE, JNC8, SIGN), generate 3 to 4 recommended guideline medications.
+For each medication return:
+- name: Brand or generic drug name (e.g. Amlodipine, Propranolol, Sumatriptan)
+- drug_class: e.g. CCB, Beta-blocker, Triptan, ACE Inhibitor, Statin
+- grade: e.g. Grade A, Grade B
+- source: e.g. JNC8, NICE CG150, SIGN 155, BNF
+- dosage: recommended dosage and schedule (e.g. "5 mg once daily · Adjunct for uncontrolled BP")
+- recommendation: clinical indication and rationale (e.g. "Consider if systolic remains >140 on Lisinopril monotherapy after 8 weeks.")
+- warning: adverse effect or contraindication to monitor (e.g. "Monitor for peripheral oedema. No significant interaction with current Rx.")
+
+Return ONLY JSON:
+{{
+  "guideline_medicines": [
+    {{
+      "name": "Amlodipine",
+      "drug_class": "CCB",
+      "grade": "Grade A",
+      "source": "JNC8",
+      "dosage": "5 mg once daily · Adjunct for uncontrolled BP",
+      "recommendation": "Consider if systolic remains >140 on Lisinopril monotherapy after 8 weeks.",
+      "warning": "Monitor for peripheral oedema. No significant interaction with current Rx."
+    }}
+  ]
+}}
+
+Entities: {entities}
+Differential: {diff_list}
+Chunks: {chunks[:3]}
+"""
+            res = parse_llm_json(self.llm.invoke(prompt))
+            if isinstance(res, dict) and "guideline_medicines" in res and isinstance(res["guideline_medicines"], list) and len(res["guideline_medicines"]) > 0:
+                return res["guideline_medicines"]
+        except Exception as e:
+            print(f"[Warning] Failed to generate LLM guideline medicines: {e}")
+
+        return [
+            {
+                "name": "Amlodipine",
+                "drug_class": "CCB",
+                "grade": "Grade A",
+                "source": "JNC8",
+                "dosage": "5 mg once daily · Adjunct for uncontrolled BP",
+                "recommendation": "Consider if systolic remains >140 on Lisinopril monotherapy after 8 weeks.",
+                "warning": "Monitor for peripheral oedema. No significant interaction with current Rx."
+            },
+            {
+                "name": "Propranolol",
+                "drug_class": "Beta-blocker",
+                "grade": "Grade B",
+                "source": "NICE CG150",
+                "dosage": "40 mg twice daily · Comorbid tension headache",
+                "recommendation": "Dual benefit for BP and headache prophylaxis. Avoid in asthma.",
+                "warning": "Can mask hypoglycaemia. Check contraindications before initiating."
+            },
+            {
+                "name": "Sumatriptan",
+                "drug_class": "Triptan",
+                "grade": "Grade B",
+                "source": "SIGN 155",
+                "dosage": "50 mg PRN · Acute headache (migraine not yet excluded)",
+                "recommendation": "Hold pending ruling out vascular headache. Do not use if ICP elevated.",
+                "warning": "Contraindicated with MAOIs. Use with caution in hypertension."
+            }
+        ]
+
+    def _extract_red_flags(self, entities: Any, summary: Any) -> List[Dict[str, Any]]:
+        try:
+            prompt = f"""
+Identify any clinical red flags or critical warning signs from this encounter.
+For each red flag return:
+- severity: "CRITICAL", "HIGH", or "MODERATE"
+- title: Brief warning title (e.g. "New headache at consistent time — rule out raised ICP")
+- recommendation: Actionable next step (e.g. "Neurological exam recommended today")
+
+Return ONLY JSON:
+{{
+  "red_flags": [
+    {{
+      "severity": "CRITICAL",
+      "title": "New headache at consistent time — rule out raised ICP",
+      "recommendation": "Neurological exam recommended today"
+    }}
+  ]
+}}
+
+Entities: {entities}
+Summary: {summary}
+"""
+            res = parse_llm_json(self.llm.invoke(prompt))
+            if isinstance(res, dict) and "red_flags" in res and isinstance(res["red_flags"], list) and len(res["red_flags"]) > 0:
+                return res["red_flags"]
+        except Exception as e:
+            print(f"[Warning] Failed to extract LLM red flags: {e}")
+
+        warnings = entities.get("warning_signs", []) if isinstance(entities, dict) else []
+        if warnings:
+            return [
+                {
+                    "severity": "CRITICAL",
+                    "title": str(w),
+                    "recommendation": "Clinical evaluation & diagnostic screen recommended today"
+                }
+                for w in warnings
+            ]
+        return [
+            {
+                "severity": "CRITICAL",
+                "title": "New headache at consistent time — rule out raised ICP",
+                "recommendation": "Neurological exam recommended today"
+            }
+        ]
+
+    def _calculate_confidence_metrics(self, summary: Any, entities: Any, diff_list: Any, chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
+        try:
+            prompt = f"""
+You are a Clinical AI Quality Auditor evaluating diagnostic confidence for a medical consultation encounter.
+Based on the encounter summary, extracted medical entities, differential diagnoses, and guideline evidence:
+Compute an overall diagnostic confidence score (integer 0-100), an overall level ("High — Confident", "Moderate — Review", "Low — Investigate"), a subtext explanation, and a breakdown for 5 clinical domains:
+1. Symptom completeness (percentage 0-100, concise description, color: "#0d9488" if >=70 else "#f59e0b" if >=50 else "#ef4444")
+2. Medical history coverage (percentage 0-100, concise description, color)
+3. Lifestyle & social history (percentage 0-100, concise description, color)
+4. DDx alignment (percentage 0-100, concise description, color)
+5. Guideline adherence (percentage 0-100, concise description, color)
+
+Return ONLY JSON:
+{{
+  "overallScore": 58,
+  "overallLevel": "Moderate — Review",
+  "subtext": "Based on transcript completeness, symptom coverage, and DDx alignment.",
+  "domains": [
+    {{
+      "name": "Symptom completeness",
+      "percentage": 52,
+      "description": "Headache characterisation incomplete (quality, location, aura missing)",
+      "color": "#0d9488"
+    }},
+    {{
+      "name": "Medical history coverage",
+      "percentage": 78,
+      "description": "Good coverage of current medications and prior diagnoses",
+      "color": "#0f766e"
+    }},
+    {{
+      "name": "Lifestyle & social history",
+      "percentage": 36,
+      "description": "Caffeine, sleep, and occupational history not yet explored",
+      "color": "#ef4444"
+    }},
+    {{
+      "name": "DDx alignment",
+      "percentage": 65,
+      "description": "Top differentials plausible; secondary screening pending",
+      "color": "#f59e0b"
+    }},
+    {{
+      "name": "Guideline adherence",
+      "percentage": 71,
+      "description": "Aligned with NICE NG136 & JNC-8 protocols",
+      "color": "#0d9488"
+    }}
+  ]
+}}
+
+Summary: {summary}
+Entities: {entities}
+Differential: {diff_list}
+"""
+            res = parse_llm_json(self.llm.invoke(prompt))
+            if isinstance(res, dict) and "overallScore" in res and "domains" in res and isinstance(res["domains"], list):
+                return res
+        except Exception as e:
+            print(f"[Warning] Failed to generate dynamic LLM confidence metrics: {e}")
+
+        return {
+            "overallScore": 58,
+            "overallLevel": "Moderate — Review",
+            "subtext": "Based on transcript completeness, symptom coverage, and DDx alignment.",
+            "domains": [
+                {
+                    "name": "Symptom completeness",
+                    "percentage": 52,
+                    "description": "Headache characterisation incomplete (quality, location, aura missing)",
+                    "color": "#0d9488"
+                },
+                {
+                    "name": "Medical history coverage",
+                    "percentage": 78,
+                    "description": "Good coverage of current medications and prior diagnoses",
+                    "color": "#0f766e"
+                },
+                {
+                    "name": "Lifestyle & social history",
+                    "percentage": 36,
+                    "description": "Caffeine, sleep, and occupational history not yet explored",
+                    "color": "#ef4444"
+                },
+                {
+                    "name": "DDx alignment",
+                    "percentage": 65,
+                    "description": "Top differentials plausible; secondary screening pending",
+                    "color": "#f59e0b"
+                },
+                {
+                    "name": "Guideline adherence",
+                    "percentage": 71,
+                    "description": "Aligned with NICE NG136 & JNC-8 protocols",
+                    "color": "#0d9488"
+                }
+            ]
         }

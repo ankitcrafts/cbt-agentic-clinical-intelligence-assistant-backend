@@ -369,7 +369,7 @@ class ReportService:
             return None
         if number <= 1.0:
             number *= 100
-        return int(round(number))
+        return round(number)
 
     @staticmethod
     def _normalize_role(role: str) -> str:
