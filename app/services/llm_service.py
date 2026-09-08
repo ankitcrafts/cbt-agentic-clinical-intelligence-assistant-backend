@@ -16,14 +16,14 @@ class LLMService:
 
     def __init__(self, provider=None):
         settings = load_settings()
-        self.provider = provider or settings.get("LLM_PROVIDER") or "gemini"
+        self.provider = str(provider or settings.get("LLM_PROVIDER") or "gemini")
         self.llm = None
         self.fallback_llm = None
 
-        google_api_key = settings.get("GOOGLE_API_KEY")
-        openrouter_key = settings.get("OPENROUTER_API_KEY")
-        groq_key = settings.get("GROQ_API_KEY")
-        openrouter_model = settings.get("OPENROUTER_MODEL") or "deepseek/deepseek-chat"
+        google_api_key = str(settings.get("GOOGLE_API_KEY") or "") or None
+        openrouter_key = str(settings.get("OPENROUTER_API_KEY") or "") or None
+        groq_key = str(settings.get("GROQ_API_KEY") or "") or None
+        openrouter_model = str(settings.get("OPENROUTER_MODEL") or "deepseek/deepseek-chat")
 
         # Initialize primary LLM
         if self.provider == "gemini":
