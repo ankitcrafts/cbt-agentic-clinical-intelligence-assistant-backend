@@ -392,8 +392,9 @@ class ReportService:
     @staticmethod
     def _escape(text: str) -> str:
         return (
-            str(text)
+            text
             .replace("&", "&amp;")
             .replace("<", "&lt;")
             .replace(">", "&gt;")
         )
+
