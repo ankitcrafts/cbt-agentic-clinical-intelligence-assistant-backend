@@ -249,6 +249,13 @@ def init_db():
             db.add_all([session_marcus, session_priya])
             db.commit()
             logger.info("Seeded demonstrative Session 1 consultation records for patients.")
+
+        # Ensure patients and doctor timing slots are seeded
+        try:
+            from app.api.scheduling import ensure_initial_seed_data
+            ensure_initial_seed_data(db)
+        except Exception as seed_err:
+            logger.warning(f"Initial scheduling seed error: {seed_err}")
     except Exception as e:
         logger.error(f"Error seeding demo accounts / sessions: {e}")
         db.rollback()

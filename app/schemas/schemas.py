@@ -64,6 +64,19 @@ class SOAPSaveFeedbackRequest(BaseModel):
     is_finalized: Optional[bool] = True
 
 
+class SOAPExportPDFRequest(BaseModel):
+    visit_id: Optional[str] = "visit"
+    encounter_id: Optional[str] = None
+    patient_name: Optional[str] = "Patient"
+    patient_id: Optional[str] = ""
+    doctor_name: Optional[str] = "Dr. Yuki Tanaka"
+    date: Optional[str] = None
+    soap: Optional[dict[str, Any]] = None
+    soap_report: Optional[dict[str, Any]] = None
+    differential_diagnosis: Optional[list[dict[str, Any]]] = None
+
+
+
 class PatientConsultationSessionResponse(BaseModel):
     id: str
     patient_id: str

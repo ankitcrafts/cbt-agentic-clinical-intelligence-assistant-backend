@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -14,11 +15,14 @@ from app.schemas.schemas import (
     AnalyzeConversationRequest,
     SOAPReframeRequest,
     SOAPSaveFeedbackRequest,
+    SOAPExportPDFRequest,
     CreateConsultationSessionRequest,
     PatientConsultationSessionResponse,
 )
 from app.services.pipeline_service import ClinicalPipeline
 from app.services.gdrive_service import gdrive_service
+from app.services.report_service import ReportService
+
 
 
 router = APIRouter(tags=["Clinical Pipeline"])
@@ -569,6 +573,41 @@ def get_soap_feedback(encounter_id: str, db: Session = Depends(get_db)):
         }
         for r in records
     ]
+
+
+@router.post("/api/v1/soap/export-pdf")
+@router.post("/soap/export-pdf")
+@router.post("/api/soap/export-pdf")
+def export_soap_pdf(payload: SOAPExportPDFRequest):
+    """
+    Generate and download a clinical SOAP note PDF report.
+    """
+    try:
+        report_service = ReportService()
+        visit_id = payload.encounter_id or payload.visit_id or "visit"
+        data = {
+            "visit_id": visit_id,
+            "patient_name": payload.patient_name or "Patient",
+            "patient_id": payload.patient_id or "",
+            "doctor_name": payload.doctor_name or "Dr. Yuki Tanaka",
+            "date": payload.date,
+            "soap": payload.soap or payload.soap_report or {},
+            "differential_diagnosis": payload.differential_diagnosis or [],
+        }
+        res = report_service.save_soap_note(data)
+        pdf_path = Path(res["soap_pdf"])
+        if not pdf_path.exists():
+            raise HTTPException(status_code=500, detail="Failed to generate SOAP PDF document.")
+
+        return FileResponse(
+            str(pdf_path),
+            media_type="application/pdf",
+            filename=res["soap_filename"],
+            headers={"Content-Disposition": f'attachment; filename="{res["soap_filename"]}"'},
+        )
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to export SOAP PDF: {str(e)}")
 
 
 def _serialize_session(s: PatientConsultationSession) -> dict:

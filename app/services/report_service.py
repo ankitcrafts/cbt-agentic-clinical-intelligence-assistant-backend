@@ -130,9 +130,10 @@ class ReportService:
         }
 
     def save_soap_note(self, result: dict[str, Any]) -> dict[str, str]:
-        visit_id = result.get("visit_id") or "visit"
+        visit_id = result.get("visit_id") or result.get("encounter_id") or "visit"
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{stamp}_{visit_id}_soap_note.pdf"
+        clean_visit_id = str(visit_id).replace("#", "")
+        filename = f"{stamp}_{clean_visit_id}_soap_note.pdf"
         path = self.output_dir / filename
 
         styles = self._styles()
@@ -146,29 +147,42 @@ class ReportService:
         )
         story = []
         insights = result.get("report_insights") or {}
-        soap = insights.get("soap") or {}
+        soap = result.get("soap") or result.get("soap_report") or insights.get("soap") or {}
+
+        patient_name = result.get("patient_name") or "Patient"
+        patient_id = result.get("patient_id") or ""
+        doctor_name = result.get("doctor_name") or "Dr. Yuki Tanaka"
+        formatted_date = result.get("date") or datetime.now().strftime("%b %d, %Y · %I:%M %p")
 
         story.append(Paragraph("SOAP Note", styles["soap_title"]))
-        story.append(Spacer(1, 18))
+
+        meta_line1 = f"<b>Patient:</b> {self._escape(patient_name)}"
+        if patient_id:
+            meta_line1 += f" &nbsp;&nbsp;|&nbsp;&nbsp; <b>ID/MRN:</b> {self._escape(patient_id)}"
+        meta_line1 += f" &nbsp;&nbsp;|&nbsp;&nbsp; <b>Clinician:</b> {self._escape(doctor_name)}"
+        story.append(Paragraph(meta_line1, styles["soap_meta"]))
+
+        meta_line2 = f"<b>Date:</b> {self._escape(formatted_date)} &nbsp;&nbsp;|&nbsp;&nbsp; <b>Encounter ID:</b> {self._escape(str(visit_id))}"
+        story.append(Paragraph(meta_line2, styles["soap_meta"]))
+        story.append(Spacer(1, 14))
 
         for label in ("Subjective", "Objective", "Assessment", "Plan"):
             key = label.lower()
             value = soap.get(key) or "Not documented"
             story.append(Paragraph(label, styles["soap_section"]))
             story.append(Paragraph(self._escape(str(value)), styles["soap_body"]))
-            story.append(Spacer(1, 14))
-
-        story.append(Paragraph("Differential Diagnosis Suggestions", styles["soap_dx_title"]))
-        story.append(
-            Paragraph(
-                "Supportive suggestions only; requires clinician verification and approval.",
-                styles["soap_disclaimer"],
-            )
-        )
-        story.append(Spacer(1, 8))
+            story.append(Spacer(1, 12))
 
         diagnoses = result.get("differential_diagnosis") or []
         if diagnoses:
+            story.append(Paragraph("Differential Diagnosis Suggestions", styles["soap_dx_title"]))
+            story.append(
+                Paragraph(
+                    "Supportive suggestions only; requires clinician verification and approval.",
+                    styles["soap_disclaimer"],
+                )
+            )
+            story.append(Spacer(1, 8))
             for index, dx in enumerate(diagnoses[:5], start=1):
                 name = dx.get("name", f"Diagnosis {index}")
                 pct = self._to_percent(dx.get("confidence"))
@@ -194,10 +208,10 @@ class ReportService:
         else:
             story.append(Paragraph("No differential suggestions available.", styles["soap_body"]))
 
-        story.append(Spacer(1, 28))
+        story.append(Spacer(1, 24))
         story.append(
             Paragraph(
-                "<b>Clinician signature:</b> ________________________________",
+                f"<b>Clinician signature:</b> ________________________________ &nbsp;&nbsp;&nbsp;&nbsp; <b>Date:</b> {datetime.now().strftime('%Y-%m-%d')}",
                 styles["soap_body"],
             )
         )
@@ -249,6 +263,15 @@ class ReportService:
                 fontSize=22,
                 textColor=black,
                 spaceAfter=10,
+            ),
+            "soap_meta": ParagraphStyle(
+                "SoapMeta",
+                parent=base["BodyText"],
+                fontName="Helvetica",
+                fontSize=9.5,
+                leading=14,
+                textColor=black,
+                spaceAfter=4,
             ),
             "soap_section": ParagraphStyle(
                 "SoapSection",

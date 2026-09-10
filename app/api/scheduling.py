@@ -1,0 +1,1100 @@
+import json
+import logging
+import uuid
+from datetime import datetime, timezone
+from typing import List, Optional, Dict, Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+from sqlalchemy import or_, and_, desc
+
+from app.core.database import get_db
+from app.models.models import PatientModel, DoctorSlotModel, PatientConsultationSession, User
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/scheduling", tags=["Patient Scheduling & Doctor Allocation"])
+
+
+# ==============================================================================
+# PYDANTIC SCHEMAS
+# ==============================================================================
+
+class VitalsSchema(BaseModel):
+    bp: Optional[str] = "120/80 mmHg"
+    hr: Optional[str] = "72 bpm"
+    pain: Optional[str] = "0/10"
+    spo2: Optional[str] = "98%"
+    temp: Optional[str] = "36.6 °C"
+
+
+class PatientCreateSchema(BaseModel):
+    name: str = Field(..., example="Marcus Delgado")
+    age: int = Field(35, example=42)
+    gender: str = Field("M", example="M")
+    phone: str = Field("+1 (555) 000-0000", example="+1 (555) 234-5678")
+    reason: str = Field(..., example="Hypertension review + morning headache")
+    condition: str = Field("Triage review", example="Hypertension Stage 1")
+    visit_type: str = Field("New Patient", example="Follow-up")
+    vitals: Optional[VitalsSchema] = None
+    preferred_doctor_name: Optional[str] = None
+    is_preferred_doctor_choice: Optional[bool] = False
+    assigned_doctor_id: Optional[str] = None
+    assigned_doctor_name: Optional[str] = None
+    assigned_time_slot: Optional[str] = None
+    booking_notes: Optional[str] = None
+
+
+class PatientUpdateSchema(BaseModel):
+    name: Optional[str] = None
+    age: Optional[int] = None
+    gender: Optional[str] = None
+    phone: Optional[str] = None
+    arrival_status: Optional[str] = None
+    reason: Optional[str] = None
+    condition: Optional[str] = None
+    last_visit: Optional[str] = None
+    visit_type: Optional[str] = None
+    vitals: Optional[VitalsSchema] = None
+    assigned_doctor_id: Optional[str] = None
+    assigned_doctor_name: Optional[str] = None
+    assigned_time_slot: Optional[str] = None
+    assigned_duration: Optional[str] = None
+    is_preferred_doctor_choice: Optional[bool] = None
+    preferred_doctor_name: Optional[str] = None
+    booking_notes: Optional[str] = None
+
+
+class AssignDoctorSlotSchema(BaseModel):
+    patient_id: str = Field(..., example="#00847261")
+    doctor_id: str = Field(..., example="DOC-001")
+    doctor_name: Optional[str] = None
+    time_slot: str = Field(..., example="09:00 AM")
+    duration: Optional[str] = "30 min"
+    is_preferred_choice: bool = False
+    preferred_doctor_name: Optional[str] = None
+    visit_type: Optional[str] = "Consultation"
+    booking_notes: Optional[str] = None
+
+
+class CreateConsultationSessionSchema(BaseModel):
+    session_title: str = Field("Consultation Session", example="Session 2: Follow-up Consultation")
+    encounter_id: Optional[str] = None
+    doctor_id: Optional[str] = None
+    doctor_name: Optional[str] = None
+    transcript: Optional[str] = ""
+    conversation: Optional[List[Dict[str, Any]]] = None
+    ai_suggestions: Optional[List[Dict[str, Any]]] = None
+    clinical_analysis: Optional[Dict[str, Any]] = None
+    soap_report: Optional[Dict[str, Any]] = None
+    duration_seconds: Optional[int] = 0
+    consultation_mode: Optional[str] = "IN_PERSON"
+    audio_source: Optional[str] = "MIC"
+    status: Optional[str] = "COMPLETED"
+
+
+# ==============================================================================
+# HARDCODED DOCTOR PROFILES WITH SLOTS SYNC
+# ==============================================================================
+
+DEFAULT_DOCTORS = [
+    {
+        "id": "DOC-001",
+        "name": "Dr. Yuki Tanaka",
+        "initials": "YT",
+        "specialty": "Senior Cardiologist",
+        "department": "Cardiology",
+        "email": "yuki.tanaka@stmercy.org",
+        "available": True,
+        "dutyStatus": "On duty",
+        "default_slots": [
+            ("09:00 AM", "30 min"),
+            ("09:45 AM", "30 min"),
+            ("10:30 AM", "30 min"),
+            ("11:15 AM", "45 min"),
+            ("02:00 PM", "30 min"),
+            ("02:45 PM", "30 min"),
+            ("03:30 PM", "30 min"),
+            ("04:15 PM", "30 min"),
+        ]
+    },
+    {
+        "id": "DOC-002",
+        "name": "Dr. Rahul Sharma",
+        "initials": "RS",
+        "specialty": "Interventional Cardiologist",
+        "department": "Cardiology",
+        "email": "rahul.sharma@stmercy.org",
+        "available": True,
+        "dutyStatus": "On duty",
+        "default_slots": [
+            ("09:30 AM", "30 min"),
+            ("10:15 AM", "30 min"),
+            ("11:00 AM", "30 min"),
+            ("02:00 PM", "30 min"),
+            ("02:45 PM", "30 min"),
+            ("03:30 PM", "30 min"),
+        ]
+    },
+    {
+        "id": "DOC-003",
+        "name": "Dr. Neha Verma",
+        "initials": "NV",
+        "specialty": "Neurologist",
+        "department": "Neurology",
+        "email": "neha.verma@stmercy.org",
+        "available": True,
+        "dutyStatus": "On duty",
+        "default_slots": [
+            ("09:00 AM", "45 min"),
+            ("10:00 AM", "30 min"),
+            ("10:45 AM", "30 min"),
+            ("11:30 AM", "30 min"),
+            ("02:15 PM", "30 min"),
+            ("03:00 PM", "30 min"),
+        ]
+    },
+    {
+        "id": "DOC-004",
+        "name": "Dr. Amit Patel",
+        "initials": "AP",
+        "specialty": "Orthopedic Surgeon",
+        "department": "Orthopedics",
+        "email": "amit.patel@stmercy.org",
+        "available": True,
+        "dutyStatus": "On duty",
+        "default_slots": [
+            ("09:30 AM", "30 min"),
+            ("10:15 AM", "30 min"),
+            ("11:00 AM", "30 min"),
+            ("02:00 PM", "30 min"),
+        ]
+    },
+    {
+        "id": "DOC-005",
+        "name": "Dr. Sneha Iyer",
+        "initials": "SI",
+        "specialty": "Pediatrician",
+        "department": "Pediatrics",
+        "email": "sneha.iyer@stmercy.org",
+        "available": False,
+        "dutyStatus": "Off duty",
+        "default_slots": [
+            ("09:00 AM", "30 min"),
+        ]
+    },
+    {
+        "id": "DOC-006",
+        "name": "Dr. Vikram Singh",
+        "initials": "VS",
+        "specialty": "General Physician",
+        "department": "Internal Medicine",
+        "email": "vikram.singh@stmercy.org",
+        "available": True,
+        "dutyStatus": "On duty",
+        "default_slots": [
+            ("09:00 AM", "30 min"),
+            ("09:45 AM", "30 min"),
+            ("10:30 AM", "30 min"),
+            ("11:15 AM", "30 min"),
+            ("02:00 PM", "30 min"),
+        ]
+    },
+]
+
+
+def format_patient_dict(p: PatientModel, session_count: int = 0) -> Dict[str, Any]:
+    vitals = {}
+    if p.vitals_json:
+        try:
+            vitals = json.loads(p.vitals_json)
+        except Exception:
+            vitals = {}
+
+    return {
+        "id": p.id,
+        "pid": p.pid,
+        "name": p.name,
+        "initials": p.initials,
+        "age": p.age,
+        "gender": p.gender,
+        "phone": p.phone,
+        "demographics": p.demographics or f"{p.age}{p.gender} · {p.id}",
+        "arrivalTime": p.arrival_time,
+        "arrivalStatus": p.arrival_status,
+        "reason": p.reason,
+        "condition": p.condition,
+        "lastVisit": p.last_visit or "—",
+        "vitals": vitals,
+        "assignedDoctorId": p.assigned_doctor_id,
+        "assignedDoctorName": p.assigned_doctor_name,
+        "assignedTimeSlot": p.assigned_time_slot,
+        "assignedDuration": p.assigned_duration or "30 min",
+        "isPreferredDoctorChoice": bool(p.is_preferred_doctor_choice),
+        "preferredDoctorName": p.preferred_doctor_name,
+        "visitType": p.visit_type,
+        "bookingNotes": p.booking_notes,
+        "totalPastSessions": session_count,
+        "createdAt": p.created_at.isoformat() if p.created_at else None,
+        "updatedAt": p.updated_at.isoformat() if p.updated_at else None,
+    }
+
+
+def ensure_initial_seed_data(db: Session):
+    """Seed default patients and doctor slots if database is freshly created."""
+    patient_count = db.query(PatientModel).count()
+    if patient_count == 0:
+        logger.info("Seeding initial hospital patients into database...")
+        initial_patients = [
+            PatientModel(
+                id="#00847261",
+                pid="P-00847261",
+                name="Marcus Delgado",
+                initials="MD",
+                age=42,
+                gender="M",
+                phone="+1 (555) 234-5678",
+                demographics="42M · #00847261",
+                arrival_time="08:45 AM",
+                arrival_status="IN_CONSULTATION",
+                reason="Hypertension review + new headache complaint",
+                condition="Hypertension Stage 1",
+                last_visit="July 14, 2026",
+                vitals_json=json.dumps({"bp": "138/88 mmHg", "hr": "72 bpm", "pain": "5-6/10", "spo2": "98%", "temp": "36.6 °C"}),
+                assigned_doctor_id="DOC-001",
+                assigned_doctor_name="Dr. Yuki Tanaka",
+                assigned_time_slot="09:00 AM",
+                assigned_duration="30 min",
+                is_preferred_doctor_choice=True,
+                preferred_doctor_name="Dr. Yuki Tanaka",
+                visit_type="Follow-up",
+                booking_notes="Patient requested Dr. Yuki Tanaka specifically for cardiology follow-up.",
+            ),
+            PatientModel(
+                id="#00391847",
+                pid="P-00391847",
+                name="Priya Sharma",
+                initials="PS",
+                age=34,
+                gender="F",
+                phone="+1 (555) 345-6789",
+                demographics="34F · #00391847",
+                arrival_time="09:15 AM",
+                arrival_status="SCHEDULED",
+                reason="Persistent morning dizziness & fatigue, thyroid review",
+                condition="Hypothyroidism",
+                last_visit="May 02, 2026",
+                vitals_json=json.dumps({"bp": "118/76 mmHg", "hr": "68 bpm", "pain": "0/10", "spo2": "99%", "temp": "36.8 °C"}),
+                assigned_doctor_id="DOC-001",
+                assigned_doctor_name="Dr. Yuki Tanaka",
+                assigned_time_slot="09:45 AM",
+                assigned_duration="30 min",
+                is_preferred_doctor_choice=False,
+                visit_type="Consultation",
+                booking_notes="Assigned based on cardiology queue availability.",
+            ),
+            PatientModel(
+                id="#00512938",
+                pid="P-00512938",
+                name="Elias Voss",
+                initials="EV",
+                age=58,
+                gender="M",
+                phone="+1 (555) 456-7890",
+                demographics="58M · #00512938",
+                arrival_time="08:50 AM",
+                arrival_status="SCHEDULED",
+                reason="Routine annual check, peripheral tingling review",
+                condition="Type 2 Diabetes",
+                last_visit="Feb 11, 2026",
+                vitals_json=json.dumps({"bp": "132/84 mmHg", "hr": "74 bpm", "pain": "0/10"}),
+                assigned_doctor_id="DOC-003",
+                assigned_doctor_name="Dr. Neha Verma",
+                assigned_time_slot="09:00 AM",
+                assigned_duration="45 min",
+                is_preferred_doctor_choice=True,
+                preferred_doctor_name="Dr. Neha Verma",
+                visit_type="Annual Check",
+                booking_notes="Patient preferred Dr. Neha Verma for neurology evaluation.",
+            ),
+            PatientModel(
+                id="#00673920",
+                pid="P-00673920",
+                name="Anya Kowalski",
+                initials="AK",
+                age=29,
+                gender="F",
+                phone="+1 (555) 567-8901",
+                demographics="29F · #00673920",
+                arrival_time="09:30 AM",
+                arrival_status="SCHEDULED",
+                reason="Chest tightness, shortness of breath on exertion",
+                condition="New presentation",
+                last_visit="—",
+                vitals_json=json.dumps({"bp": "122/80 mmHg", "hr": "82 bpm", "pain": "3/10"}),
+                assigned_doctor_id="DOC-001",
+                assigned_doctor_name="Dr. Yuki Tanaka",
+                assigned_time_slot="11:15 AM",
+                assigned_duration="45 min",
+                is_preferred_doctor_choice=True,
+                preferred_doctor_name="Dr. Yuki Tanaka",
+                visit_type="New Patient",
+                booking_notes="New referral requested senior cardiologist Dr. Yuki Tanaka.",
+            ),
+            PatientModel(
+                id="#00182736",
+                pid="P-00182736",
+                name="Samuel Obi",
+                initials="SO",
+                age=67,
+                gender="M",
+                phone="+1 (555) 678-9012",
+                demographics="67M · #00182736",
+                arrival_time="09:10 AM",
+                arrival_status="SCHEDULED",
+                reason="Post-catheterisation review, stable angina check",
+                condition="Stable Angina",
+                last_visit="June 20, 2026",
+                vitals_json=json.dumps({"bp": "128/82 mmHg", "hr": "64 bpm", "pain": "1/10"}),
+                assigned_doctor_id="DOC-002",
+                assigned_doctor_name="Dr. Rahul Sharma",
+                assigned_time_slot="09:30 AM",
+                assigned_duration="30 min",
+                is_preferred_doctor_choice=False,
+                visit_type="Follow-up",
+                booking_notes="Assigned to Dr. Rahul Sharma for catheterisation follow-up.",
+            ),
+            PatientModel(
+                id="#00847193",
+                pid="P-00847193",
+                name="Lin Wei",
+                initials="LW",
+                age=45,
+                gender="F",
+                phone="+1 (555) 789-0123",
+                demographics="45F · #00847193",
+                arrival_time="09:40 AM",
+                arrival_status="SCHEDULED",
+                reason="AF management, medication titration check",
+                condition="Atrial Fibrillation",
+                last_visit="March 18, 2026",
+                vitals_json=json.dumps({"bp": "126/80 mmHg", "hr": "76 bpm", "pain": "0/10"}),
+                assigned_doctor_id="DOC-001",
+                assigned_doctor_name="Dr. Yuki Tanaka",
+                assigned_time_slot="02:00 PM",
+                assigned_duration="30 min",
+                is_preferred_doctor_choice=True,
+                preferred_doctor_name="Dr. Yuki Tanaka",
+                visit_type="Follow-up",
+                booking_notes="Patient requested Dr. Yuki Tanaka for AF check.",
+            ),
+            PatientModel(
+                id="#00928174",
+                pid="P-00928174",
+                name="Arjun Nair",
+                initials="AN",
+                age=51,
+                gender="M",
+                phone="+1 (555) 890-1234",
+                demographics="51M · #00928174",
+                arrival_time="09:50 AM",
+                arrival_status="ARRIVED",
+                reason="Elevated home BP readings, palpitation episodes",
+                condition="Arrhythmia screening",
+                last_visit="—",
+                vitals_json=json.dumps({"bp": "144/92 mmHg", "hr": "88 bpm", "pain": "0/10"}),
+                assigned_doctor_id=None,
+                assigned_doctor_name=None,
+                assigned_time_slot=None,
+                is_preferred_doctor_choice=False,
+                visit_type="Consultation",
+                booking_notes="Walk-in patient awaiting doctor allocation.",
+            ),
+            PatientModel(
+                id="#00472910",
+                pid="P-00472910",
+                name="Fatima Al-Zahra",
+                initials="FA",
+                age=39,
+                gender="F",
+                phone="+1 (555) 901-2345",
+                demographics="39F · #00472910",
+                arrival_time="10:05 AM",
+                arrival_status="ARRIVED",
+                reason="Acute joint inflammation, knee swelling post-exercise",
+                condition="Acute Arthralgia",
+                last_visit="—",
+                vitals_json=json.dumps({"bp": "120/78 mmHg", "hr": "70 bpm", "pain": "6/10"}),
+                assigned_doctor_id=None,
+                assigned_doctor_name=None,
+                assigned_time_slot=None,
+                is_preferred_doctor_choice=False,
+                visit_type="New Patient",
+                booking_notes="Requested Orthopedic specialist assessment.",
+            ),
+        ]
+        db.add_all(initial_patients)
+        db.commit()
+
+    # Seed Doctor Slots if empty
+    slot_count = db.query(DoctorSlotModel).count()
+    if slot_count == 0:
+        logger.info("Seeding initial Doctor timing slots into database...")
+        slot_entries = []
+        for doc in DEFAULT_DOCTORS:
+            for idx, (slot_time, duration) in enumerate(doc["default_slots"]):
+                slot_id = f"{doc['id']}-s{idx+1}"
+                matched_pat = db.query(PatientModel).filter(
+                    PatientModel.assigned_doctor_id == doc["id"],
+                    PatientModel.assigned_time_slot == slot_time
+                ).first()
+                
+                slot_entries.append(
+                    DoctorSlotModel(
+                        id=slot_id,
+                        doctor_id=doc["id"],
+                        doctor_name=doc["name"],
+                        time_slot=slot_time,
+                        duration=duration,
+                        status="BOOKED" if matched_pat else "AVAILABLE",
+                        booked_patient_id=matched_pat.id if matched_pat else None,
+                        booked_patient_name=matched_pat.name if matched_pat else None,
+                    )
+                )
+        db.add_all(slot_entries)
+        db.commit()
+
+
+# ==============================================================================
+# REST API ENDPOINTS
+# ==============================================================================
+
+@router.get("/patients")
+def list_patients(
+    search: Optional[str] = Query(None, description="Search by name, phone, MRN, reason or doctor"),
+    status: Optional[str] = Query("ALL", description="Filter by status: ALL, UNASSIGNED, SCHEDULED, IN_CONSULTATION, COMPLETED"),
+    db: Session = Depends(get_db)
+):
+    """
+    List all hospital patients with optional search and status filtering.
+    Administrator can see all new & returning patients.
+    """
+    ensure_initial_seed_data(db)
+
+    query = db.query(PatientModel)
+
+    if search:
+        search_term = f"%{search.strip().lower()}%"
+        query = query.filter(
+            or_(
+                PatientModel.name.ilike(search_term),
+                PatientModel.id.ilike(search_term),
+                PatientModel.pid.ilike(search_term),
+                PatientModel.phone.ilike(search_term),
+                PatientModel.reason.ilike(search_term),
+                PatientModel.assigned_doctor_name.ilike(search_term),
+            )
+        )
+
+    if status and status != "ALL":
+        if status == "UNASSIGNED":
+            query = query.filter(
+                or_(
+                    PatientModel.assigned_doctor_id.is_(None),
+                    PatientModel.arrival_status == "ARRIVED"
+                )
+            )
+        elif status == "SCHEDULED":
+            query = query.filter(
+                and_(
+                    PatientModel.assigned_doctor_id.isnot(None),
+                    PatientModel.arrival_status == "SCHEDULED"
+                )
+            )
+        elif status == "IN_CONSULTATION":
+            query = query.filter(PatientModel.arrival_status == "IN_CONSULTATION")
+        elif status == "COMPLETED":
+            query = query.filter(PatientModel.arrival_status == "COMPLETED")
+
+    patients = query.order_by(desc(PatientModel.created_at)).all()
+
+    # Calculate past session counts for each patient
+    results = []
+    for p in patients:
+        session_count = db.query(PatientConsultationSession).filter(
+            PatientConsultationSession.patient_id == p.id
+        ).count()
+        results.append(format_patient_dict(p, session_count=session_count))
+
+    return {
+        "success": True,
+        "count": len(results),
+        "data": results
+    }
+
+
+@router.get("/patients/{patient_id}")
+def get_patient_detail(patient_id: str, db: Session = Depends(get_db)):
+    """
+    Retrieve single patient details, including all past consultation sessions & clinical records.
+    """
+    ensure_initial_seed_data(db)
+
+    patient = db.query(PatientModel).filter(PatientModel.id == patient_id).first()
+    if not patient:
+        patient = db.query(PatientModel).filter(PatientModel.pid == patient_id).first()
+    
+    if not patient:
+        raise HTTPException(status_code=404, detail=f"Patient with ID '{patient_id}' not found.")
+
+    sessions = db.query(PatientConsultationSession).filter(
+        PatientConsultationSession.patient_id == patient.id
+    ).order_by(PatientConsultationSession.session_number.asc()).all()
+
+    session_list = []
+    for s in sessions:
+        conversation = []
+        ai_suggestions = []
+        clinical_analysis = {}
+        soap_report = {}
+        try:
+            if s.conversation_json:
+                conversation = json.loads(s.conversation_json)
+            if s.ai_suggestions_json:
+                ai_suggestions = json.loads(s.ai_suggestions_json)
+            if s.clinical_analysis_json:
+                clinical_analysis = json.loads(s.clinical_analysis_json)
+            if s.soap_report_json:
+                soap_report = json.loads(s.soap_report_json)
+        except Exception as e:
+            logger.warning(f"Error parsing session JSON for {s.id}: {e}")
+
+        session_list.append({
+            "id": s.id,
+            "encounter_id": s.encounter_id,
+            "session_number": s.session_number,
+            "session_title": s.session_title,
+            "doctor_id": s.doctor_id,
+            "doctor_name": s.doctor_name,
+            "appointment_date": s.appointment_date.isoformat() if s.appointment_date else None,
+            "transcript": s.transcript,
+            "conversation": conversation,
+            "ai_suggestions": ai_suggestions,
+            "clinical_analysis": clinical_analysis,
+            "soap_report": soap_report,
+            "duration_seconds": s.duration_seconds,
+            "status": s.status,
+            "consultation_mode": s.consultation_mode,
+            "audio_source": s.audio_source,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+        })
+
+    patient_dict = format_patient_dict(patient, session_count=len(session_list))
+    patient_dict["sessions"] = session_list
+
+    return {
+        "success": True,
+        "data": patient_dict
+    }
+
+
+@router.post("/patients")
+def create_patient(payload: PatientCreateSchema, db: Session = Depends(get_db)):
+    """
+    Register a new walk-in or returning patient at reception.
+    """
+    ensure_initial_seed_data(db)
+
+    id_num = f"{uuid.uuid4().int % 9000000 + 1000000}"
+    new_id = f"#{id_num}"
+    pid = f"P-{id_num}"
+
+    initials = "".join([part[0] for part in payload.name.strip().split() if part])[:2].upper()
+    if not initials:
+        initials = "PT"
+
+    vitals_json = json.dumps(payload.vitals.dict()) if payload.vitals else json.dumps({
+        "bp": "120/80 mmHg",
+        "hr": "72 bpm",
+        "pain": "0/10",
+        "spo2": "98%",
+        "temp": "36.6 °C"
+    })
+
+    is_preferred = bool(payload.is_preferred_doctor_choice or payload.preferred_doctor_name)
+    pref_doc_name = payload.preferred_doctor_name
+
+    arrival_time = datetime.now().strftime("%I:%M %p")
+    demographics = f"{payload.age}{payload.gender} · {new_id}"
+
+    new_patient = PatientModel(
+        id=new_id,
+        pid=pid,
+        name=payload.name.strip(),
+        initials=initials,
+        age=payload.age,
+        gender=payload.gender,
+        phone=payload.phone.strip(),
+        demographics=demographics,
+        arrival_time=arrival_time,
+        arrival_status="SCHEDULED" if payload.assigned_doctor_id else "ARRIVED",
+        reason=payload.reason.strip(),
+        condition=payload.condition.strip() or "Triage Review",
+        last_visit="—",
+        vitals_json=vitals_json,
+        assigned_doctor_id=payload.assigned_doctor_id,
+        assigned_doctor_name=payload.assigned_doctor_name,
+        assigned_time_slot=payload.assigned_time_slot,
+        is_preferred_doctor_choice=is_preferred,
+        preferred_doctor_name=pref_doc_name,
+        visit_type=payload.visit_type or "New Patient",
+        booking_notes=payload.booking_notes or ("Patient requested preferred physician." if is_preferred else "Registered at front desk.")
+    )
+
+    db.add(new_patient)
+
+    if payload.assigned_doctor_id and payload.assigned_time_slot:
+        slot = db.query(DoctorSlotModel).filter(
+            DoctorSlotModel.doctor_id == payload.assigned_doctor_id,
+            DoctorSlotModel.time_slot == payload.assigned_time_slot
+        ).first()
+        if slot:
+            slot.status = "BOOKED"
+            slot.booked_patient_id = new_id
+            slot.booked_patient_name = payload.name.strip()
+
+    db.commit()
+    db.refresh(new_patient)
+
+    return {
+        "success": True,
+        "message": f"Patient '{new_patient.name}' ({new_patient.id}) registered successfully.",
+        "data": format_patient_dict(new_patient, session_count=0)
+    }
+
+
+@router.put("/patients/{patient_id}")
+def update_patient(patient_id: str, payload: PatientUpdateSchema, db: Session = Depends(get_db)):
+    """
+    Update patient triage information, vitals, visit status, or notes.
+    """
+    patient = db.query(PatientModel).filter(PatientModel.id == patient_id).first()
+    if not patient:
+        patient = db.query(PatientModel).filter(PatientModel.pid == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail=f"Patient '{patient_id}' not found.")
+
+    if payload.name is not None:
+        patient.name = payload.name.strip()
+    if payload.age is not None:
+        patient.age = payload.age
+    if payload.gender is not None:
+        patient.gender = payload.gender
+    if payload.phone is not None:
+        patient.phone = payload.phone.strip()
+    if payload.arrival_status is not None:
+        patient.arrival_status = payload.arrival_status
+    if payload.reason is not None:
+        patient.reason = payload.reason
+    if payload.condition is not None:
+        patient.condition = payload.condition
+    if payload.last_visit is not None:
+        patient.last_visit = payload.last_visit
+    if payload.visit_type is not None:
+        patient.visit_type = payload.visit_type
+    if payload.booking_notes is not None:
+        patient.booking_notes = payload.booking_notes
+    if payload.is_preferred_doctor_choice is not None:
+        patient.is_preferred_doctor_choice = payload.is_preferred_doctor_choice
+    if payload.preferred_doctor_name is not None:
+        patient.preferred_doctor_name = payload.preferred_doctor_name
+
+    if payload.vitals is not None:
+        patient.vitals_json = json.dumps(payload.vitals.dict())
+
+    patient.demographics = f"{patient.age}{patient.gender} · {patient.id}"
+
+    db.commit()
+    db.refresh(patient)
+
+    session_count = db.query(PatientConsultationSession).filter(
+        PatientConsultationSession.patient_id == patient.id
+    ).count()
+
+    return {
+        "success": True,
+        "message": f"Patient '{patient.id}' updated successfully.",
+        "data": format_patient_dict(patient, session_count=session_count)
+    }
+
+
+@router.delete("/patients/{patient_id}")
+def delete_patient(patient_id: str, db: Session = Depends(get_db)):
+    """
+    Remove or discharge a patient and free their booked slot.
+    """
+    patient = db.query(PatientModel).filter(PatientModel.id == patient_id).first()
+    if not patient:
+        patient = db.query(PatientModel).filter(PatientModel.pid == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail=f"Patient '{patient_id}' not found.")
+
+    if patient.assigned_doctor_id and patient.assigned_time_slot:
+        slot = db.query(DoctorSlotModel).filter(
+            DoctorSlotModel.doctor_id == patient.assigned_doctor_id,
+            DoctorSlotModel.time_slot == patient.assigned_time_slot
+        ).first()
+        if slot and slot.booked_patient_id == patient.id:
+            slot.status = "AVAILABLE"
+            slot.booked_patient_id = None
+            slot.booked_patient_name = None
+
+    db.delete(patient)
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Patient '{patient_id}' deleted successfully."
+    }
+
+
+# ==============================================================================
+# DOCTORS & SLOTS MANAGEMENT
+# ==============================================================================
+
+@router.get("/doctors")
+def list_doctors_with_slots(db: Session = Depends(get_db)):
+    """
+    Get full list of hospital doctors with their real-time timing slots and availability.
+    """
+    ensure_initial_seed_data(db)
+
+    results = []
+    for doc in DEFAULT_DOCTORS:
+        slots_in_db = db.query(DoctorSlotModel).filter(
+            DoctorSlotModel.doctor_id == doc["id"]
+        ).all()
+
+        slot_items = []
+        for s in slots_in_db:
+            slot_items.append({
+                "id": s.id,
+                "time": s.time_slot,
+                "duration": s.duration,
+                "status": s.status,
+                "bookedPatientId": s.booked_patient_id,
+                "bookedPatientName": s.booked_patient_name,
+            })
+
+        queue_count = db.query(PatientModel).filter(
+            PatientModel.assigned_doctor_id == doc["id"],
+            PatientModel.arrival_status.in_(["SCHEDULED", "IN_CONSULTATION", "ARRIVED"])
+        ).count()
+
+        results.append({
+            "id": doc["id"],
+            "name": doc["name"],
+            "initials": doc["initials"],
+            "specialty": doc["specialty"],
+            "department": doc["department"],
+            "email": doc["email"],
+            "available": doc["available"],
+            "dutyStatus": doc["dutyStatus"],
+            "queueCount": queue_count,
+            "slots": slot_items
+        })
+
+    return {
+        "success": True,
+        "count": len(results),
+        "data": results
+    }
+
+
+@router.get("/doctors/{doctor_id}/slots")
+def get_doctor_slots(doctor_id: str, db: Session = Depends(get_db)):
+    """
+    Get timing slots for a specific doctor.
+    """
+    ensure_initial_seed_data(db)
+
+    slots = db.query(DoctorSlotModel).filter(
+        DoctorSlotModel.doctor_id == doctor_id
+    ).all()
+
+    if not slots:
+        raise HTTPException(status_code=404, detail=f"No slots found for doctor ID '{doctor_id}'.")
+
+    return {
+        "success": True,
+        "doctorId": doctor_id,
+        "data": [
+            {
+                "id": s.id,
+                "time": s.time_slot,
+                "duration": s.duration,
+                "status": s.status,
+                "bookedPatientId": s.booked_patient_id,
+                "bookedPatientName": s.booked_patient_name,
+            }
+            for s in slots
+        ]
+    }
+
+
+@router.post("/assign")
+def assign_doctor_and_slot(payload: AssignDoctorSlotSchema, db: Session = Depends(get_db)):
+    """
+    Administrator assigns or distributes a doctor and timing slot to a patient.
+    Handles preferred doctor choice of patient or administrative slot allocation.
+    """
+    ensure_initial_seed_data(db)
+
+    patient = db.query(PatientModel).filter(PatientModel.id == payload.patient_id).first()
+    if not patient:
+        patient = db.query(PatientModel).filter(PatientModel.pid == payload.patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail=f"Patient '{payload.patient_id}' not found.")
+
+    doc = next((d for d in DEFAULT_DOCTORS if d["id"] == payload.doctor_id), None)
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Doctor '{payload.doctor_id}' not found.")
+
+    slot = db.query(DoctorSlotModel).filter(
+        DoctorSlotModel.doctor_id == payload.doctor_id,
+        DoctorSlotModel.time_slot == payload.time_slot
+    ).first()
+
+    if not slot:
+        raise HTTPException(status_code=400, detail=f"Timing slot '{payload.time_slot}' does not exist for {doc['name']}.")
+
+    if slot.status == "BOOKED" and slot.booked_patient_id and slot.booked_patient_id != patient.id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Slot '{payload.time_slot}' is already booked for another patient ({slot.booked_patient_name}). Please select another available slot."
+        )
+
+    # Release previously booked slot
+    if patient.assigned_doctor_id and patient.assigned_time_slot:
+        prev_slot = db.query(DoctorSlotModel).filter(
+            DoctorSlotModel.doctor_id == patient.assigned_doctor_id,
+            DoctorSlotModel.time_slot == patient.assigned_time_slot
+        ).first()
+        if prev_slot and prev_slot.id != slot.id and prev_slot.booked_patient_id == patient.id:
+            prev_slot.status = "AVAILABLE"
+            prev_slot.booked_patient_id = None
+            prev_slot.booked_patient_name = None
+
+    # Book the new slot
+    slot.status = "BOOKED"
+    slot.booked_patient_id = patient.id
+    slot.booked_patient_name = patient.name
+
+    # Update patient record
+    patient.assigned_doctor_id = doc["id"]
+    patient.assigned_doctor_name = doc["name"]
+    patient.assigned_time_slot = payload.time_slot
+    patient.assigned_duration = payload.duration or slot.duration
+    patient.arrival_status = "SCHEDULED"
+    patient.is_preferred_doctor_choice = payload.is_preferred_choice
+    patient.preferred_doctor_name = (payload.preferred_doctor_name or doc["name"]) if payload.is_preferred_choice else None
+    
+    if payload.visit_type:
+        patient.visit_type = payload.visit_type
+    
+    if payload.booking_notes:
+        patient.booking_notes = payload.booking_notes
+    else:
+        patient.booking_notes = f"{'Preferred doctor choice: ' if payload.is_preferred_choice else 'Allocated to '}{doc['name']} at {payload.time_slot} ({slot.duration})."
+
+    db.commit()
+    db.refresh(patient)
+
+    session_count = db.query(PatientConsultationSession).filter(
+        PatientConsultationSession.patient_id == patient.id
+    ).count()
+
+    return {
+        "success": True,
+        "message": f"Successfully assigned {patient.name} ({patient.id}) to {doc['name']} for {payload.time_slot}{' [Patient Preferred Choice]' if payload.is_preferred_choice else ''}.",
+        "data": format_patient_dict(patient, session_count=session_count)
+    }
+
+
+@router.get("/queue/{doctor_id_or_name}")
+def get_doctor_queue(doctor_id_or_name: str, db: Session = Depends(get_db)):
+    """
+    Dynamic queue for Doctor's screen.
+    Returns patient list assigned to this doctor via admin distribution or patient preferred booking.
+    """
+    ensure_initial_seed_data(db)
+
+    matched_doc = None
+    for doc in DEFAULT_DOCTORS:
+        if (
+            doc["id"].lower() == doctor_id_or_name.lower() or
+            doc["name"].lower() in doctor_id_or_name.lower() or
+            doctor_id_or_name.lower() in doc["name"].lower()
+        ):
+            matched_doc = doc
+            break
+
+    doc_id = matched_doc["id"] if matched_doc else "DOC-001"
+    doc_name = matched_doc["name"] if matched_doc else "Dr. Yuki Tanaka"
+
+    patients = db.query(PatientModel).filter(
+        PatientModel.assigned_doctor_id == doc_id
+    ).order_by(PatientModel.assigned_time_slot.asc()).all()
+
+    queue_items = []
+    for p in patients:
+        session_count = db.query(PatientConsultationSession).filter(
+            PatientConsultationSession.patient_id == p.id
+        ).count()
+        queue_items.append(format_patient_dict(p, session_count=session_count))
+
+    return {
+        "success": True,
+        "doctorId": doc_id,
+        "doctorName": doc_name,
+        "queueCount": len(queue_items),
+        "data": queue_items
+    }
+
+
+# ==============================================================================
+# PATIENT SESSIONS & ENCOUNTER HISTORY
+# ==============================================================================
+
+@router.get("/patients/{patient_id}/sessions")
+def get_patient_sessions(patient_id: str, db: Session = Depends(get_db)):
+    """
+    Get all past consultation sessions & encounters for a specific patient.
+    """
+    ensure_initial_seed_data(db)
+
+    sessions = db.query(PatientConsultationSession).filter(
+        PatientConsultationSession.patient_id == patient_id
+    ).order_by(PatientConsultationSession.session_number.asc()).all()
+
+    formatted_sessions = []
+    for s in sessions:
+        conversation = []
+        ai_suggestions = []
+        clinical_analysis = {}
+        soap_report = {}
+        try:
+            if s.conversation_json:
+                conversation = json.loads(s.conversation_json)
+            if s.ai_suggestions_json:
+                ai_suggestions = json.loads(s.ai_suggestions_json)
+            if s.clinical_analysis_json:
+                clinical_analysis = json.loads(s.clinical_analysis_json)
+            if s.soap_report_json:
+                soap_report = json.loads(s.soap_report_json)
+        except Exception:
+            pass
+
+        formatted_sessions.append({
+            "id": s.id,
+            "patientId": s.patient_id,
+            "patientName": s.patient_name,
+            "doctorId": s.doctor_id,
+            "doctorName": s.doctor_name,
+            "encounterId": s.encounter_id,
+            "sessionNumber": s.session_number,
+            "sessionTitle": s.session_title,
+            "appointmentDate": s.appointment_date.isoformat() if s.appointment_date else None,
+            "transcript": s.transcript,
+            "conversation": conversation,
+            "aiSuggestions": ai_suggestions,
+            "clinicalAnalysis": clinical_analysis,
+            "soapReport": soap_report,
+            "durationSeconds": s.duration_seconds,
+            "status": s.status,
+            "consultationMode": s.consultation_mode,
+            "audioSource": s.audio_source,
+            "gdriveWebViewLink": s.gdrive_web_view_link,
+            "createdAt": s.created_at.isoformat() if s.created_at else None,
+        })
+
+    return {
+        "success": True,
+        "patientId": patient_id,
+        "count": len(formatted_sessions),
+        "data": formatted_sessions
+    }
+
+
+@router.post("/patients/{patient_id}/sessions")
+def create_patient_session(
+    patient_id: str,
+    payload: CreateConsultationSessionSchema,
+    db: Session = Depends(get_db)
+):
+    """
+    Create / finalize a new consultation session for a patient.
+    """
+    ensure_initial_seed_data(db)
+
+    patient = db.query(PatientModel).filter(PatientModel.id == patient_id).first()
+    if not patient:
+        patient = db.query(PatientModel).filter(PatientModel.pid == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail=f"Patient '{patient_id}' not found.")
+
+    latest_session = db.query(PatientConsultationSession).filter(
+        PatientConsultationSession.patient_id == patient.id
+    ).order_by(PatientConsultationSession.session_number.desc()).first()
+
+    next_num = (latest_session.session_number + 1) if latest_session else 1
+    encounter_id = payload.encounter_id or f"CONS-{patient.id.replace('#', '')}-{next_num}"
+
+    conv_json = json.dumps(payload.conversation) if payload.conversation else None
+    sug_json = json.dumps(payload.ai_suggestions) if payload.ai_suggestions else None
+    analysis_json = json.dumps(payload.clinical_analysis) if payload.clinical_analysis else None
+    soap_json = json.dumps(payload.soap_report) if payload.soap_report else None
+
+    new_session = PatientConsultationSession(
+        patient_id=patient.id,
+        patient_name=patient.name,
+        doctor_id=payload.doctor_id or patient.assigned_doctor_id or "DOC-001",
+        doctor_name=payload.doctor_name or patient.assigned_doctor_name or "Dr. Yuki Tanaka",
+        encounter_id=encounter_id,
+        session_number=next_num,
+        session_title=payload.session_title or f"Session {next_num}: Clinical Consultation",
+        appointment_date=datetime.now(timezone.utc),
+        transcript=payload.transcript,
+        conversation_json=conv_json,
+        ai_suggestions_json=sug_json,
+        clinical_analysis_json=analysis_json,
+        soap_report_json=soap_json,
+        duration_seconds=payload.duration_seconds or 0,
+        consultation_mode=payload.consultation_mode or "IN_PERSON",
+        audio_source=payload.audio_source or "MIC",
+        status=payload.status or "COMPLETED"
+    )
+
+    db.add(new_session)
+
+    patient.last_visit = datetime.now().strftime("%B %d, %Y")
+    if payload.status == "COMPLETED":
+        patient.arrival_status = "COMPLETED"
+    else:
+        patient.arrival_status = "IN_CONSULTATION"
+
+    db.commit()
+    db.refresh(new_session)
+
+    return {
+        "success": True,
+        "message": f"Consultation session #{new_session.session_number} saved for patient {patient.name}.",
+        "data": {
+            "id": new_session.id,
+            "sessionNumber": new_session.session_number,
+            "sessionTitle": new_session.session_title,
+            "encounterId": new_session.encounter_id,
+            "status": new_session.status
+        }
+    }

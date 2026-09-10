@@ -126,5 +126,52 @@ class PatientConsultationSession(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class PatientModel(Base):
+    __tablename__ = "patients"
+
+    id: Mapped[str] = mapped_column(String(50), primary_key=True)  # e.g. "#00847261"
+    pid: Mapped[str] = mapped_column(String(50), index=True, nullable=False)  # e.g. "P-00847261"
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    initials: Mapped[str] = mapped_column(String(10), nullable=False, default="PT")
+    age: Mapped[int] = mapped_column(Integer, nullable=False, default=35)
+    gender: Mapped[str] = mapped_column(String(20), nullable=False, default="M")
+    phone: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    demographics: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    arrival_time: Mapped[str] = mapped_column(String(50), nullable=False, default="09:00 AM")
+    arrival_status: Mapped[str] = mapped_column(String(50), nullable=False, default="ARRIVED")  # ARRIVED, SCHEDULED, IN_CONSULTATION, COMPLETED
+    reason: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    condition: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    last_visit: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    vitals_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    # Doctor allocation & Preferences
+    assigned_doctor_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    assigned_doctor_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    assigned_time_slot: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    assigned_duration: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default="30 min")
+    is_preferred_doctor_choice: Mapped[bool] = mapped_column(Boolean, default=False)
+    preferred_doctor_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    visit_type: Mapped[str] = mapped_column(String(100), default="Consultation")
+    booking_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class DoctorSlotModel(Base):
+    __tablename__ = "doctor_slots"
+
+    id: Mapped[str] = mapped_column(String(50), primary_key=True)  # e.g. "DOC-001-s1"
+    doctor_id: Mapped[str] = mapped_column(String(50), index=True, nullable=False)
+    doctor_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    time_slot: Mapped[str] = mapped_column(String(50), nullable=False)
+    duration: Mapped[str] = mapped_column(String(50), nullable=False, default="30 min")
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="AVAILABLE")  # AVAILABLE, BOOKED
+    booked_patient_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    booked_patient_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+
 
 

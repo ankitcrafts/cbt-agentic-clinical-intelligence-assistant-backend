@@ -19,6 +19,7 @@ from app.core.tracing import setup_langsmith_tracing, tracing_status
 from app.services.pipeline_service import ClinicalPipeline
 from app.api.routes import router as api_router
 from app.api.auth import router as auth_router
+from app.api.scheduling import router as scheduling_router
 
 TRACING_INFO = setup_langsmith_tracing()
 OUTPUT_DIR = PROJECT_ROOT / "output"
@@ -61,6 +62,8 @@ app.add_middleware(
 # Register API routes
 app.include_router(auth_router)
 app.include_router(api_router)
+app.include_router(scheduling_router)
+
 
 
 @app.get("/")
