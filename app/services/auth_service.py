@@ -70,11 +70,8 @@ def generate_and_send_otp(req: SendOTPRequest, db: Session) -> SendOTPResponse:
     db.commit()
     db.refresh(otp_record)
 
-    # Dispatch email via Gmail SMTP
+    # Dispatch email via Gmail SMTP (strictly deliver OTP to recipient's email)
     email_sent = send_otp_email(to_email=email_clean, otp_code=otp_code, role=role_str, purpose=req.purpose)
-
-    # Include dev_otp for seamless testing & local autofill convenience
-    dev_otp = otp_code
 
     msg_text = f"A 6-digit verification code has been sent to {email_clean}"
     if email_sent:
@@ -86,7 +83,7 @@ def generate_and_send_otp(req: SendOTPRequest, db: Session) -> SendOTPResponse:
         email=email_clean,
         role=role_str,
         expires_in_seconds=OTP_EXPIRE_MINUTES * 60,
-        dev_otp=dev_otp,
+        dev_otp=None,
     )
 
 
