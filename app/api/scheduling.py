@@ -2,7 +2,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -30,13 +30,13 @@ class VitalsSchema(BaseModel):
 
 
 class PatientCreateSchema(BaseModel):
-    name: str = Field(..., example="Marcus Delgado")
-    age: int = Field(35, example=42)
-    gender: str = Field("M", example="M")
-    phone: str = Field("+1 (555) 000-0000", example="+1 (555) 234-5678")
-    reason: str = Field(..., example="Hypertension review + morning headache")
-    condition: str = Field("Triage review", example="Hypertension Stage 1")
-    visit_type: str = Field("New Patient", example="Follow-up")
+    name: str = Field(..., examples=["Marcus Delgado"])
+    age: int = Field(35, examples=[42])
+    gender: str = Field("M", examples=["M"])
+    phone: str = Field("+1 (555) 000-0000", examples=["+1 (555) 234-5678"])
+    reason: str = Field(..., examples=["Hypertension review + morning headache"])
+    condition: str = Field("Triage review", examples=["Hypertension Stage 1"])
+    visit_type: str = Field("New Patient", examples=["Follow-up"])
     vitals: Optional[VitalsSchema] = None
     preferred_doctor_name: Optional[str] = None
     is_preferred_doctor_choice: Optional[bool] = False
@@ -67,10 +67,10 @@ class PatientUpdateSchema(BaseModel):
 
 
 class AssignDoctorSlotSchema(BaseModel):
-    patient_id: str = Field(..., example="#00847261")
-    doctor_id: str = Field(..., example="DOC-001")
+    patient_id: str = Field(..., examples=["#00847261"])
+    doctor_id: str = Field(..., examples=["DOC-001"])
     doctor_name: Optional[str] = None
-    time_slot: str = Field(..., example="09:00 AM")
+    time_slot: str = Field(..., examples=["09:00 AM"])
     duration: Optional[str] = "30 min"
     is_preferred_choice: bool = False
     preferred_doctor_name: Optional[str] = None
@@ -79,7 +79,7 @@ class AssignDoctorSlotSchema(BaseModel):
 
 
 class CreateConsultationSessionSchema(BaseModel):
-    session_title: str = Field("Consultation Session", example="Session 2: Follow-up Consultation")
+    session_title: str = Field("Consultation Session", examples=["Session 2: Follow-up Consultation"])
     encounter_id: Optional[str] = None
     doctor_id: Optional[str] = None
     doctor_name: Optional[str] = None
@@ -98,7 +98,7 @@ class CreateConsultationSessionSchema(BaseModel):
 # HARDCODED DOCTOR PROFILES WITH SLOTS SYNC
 # ==============================================================================
 
-DEFAULT_DOCTORS = [
+DEFAULT_DOCTORS: List[Dict[str, Any]] = [
     {
         "id": "DOC-001",
         "name": "Dr. Yuki Tanaka",
@@ -208,7 +208,7 @@ def format_patient_dict(p: PatientModel, session_count: int = 0) -> Dict[str, An
     vitals = {}
     if p.vitals_json:
         try:
-            vitals = json.loads(p.vitals_json)
+            vitals = json.loads(str(p.vitals_json))
         except Exception:
             vitals = {}
 
@@ -443,7 +443,8 @@ def ensure_initial_seed_data(db: Session):
         logger.info("Seeding initial Doctor timing slots into database...")
         slot_entries = []
         for doc in DEFAULT_DOCTORS:
-            for idx, (slot_time, duration) in enumerate(doc["default_slots"]):
+            default_slots: List[Tuple[str, str]] = doc.get("default_slots", [])
+            for idx, (slot_time, duration) in enumerate(default_slots):
                 slot_id = f"{doc['id']}-s{idx+1}"
                 matched_pat = db.query(PatientModel).filter(
                     PatientModel.assigned_doctor_id == doc["id"],
@@ -560,13 +561,13 @@ def get_patient_detail(patient_id: str, db: Session = Depends(get_db)):
         soap_report = {}
         try:
             if s.conversation_json:
-                conversation = json.loads(s.conversation_json)
+                conversation = json.loads(str(s.conversation_json))
             if s.ai_suggestions_json:
-                ai_suggestions = json.loads(s.ai_suggestions_json)
+                ai_suggestions = json.loads(str(s.ai_suggestions_json))
             if s.clinical_analysis_json:
-                clinical_analysis = json.loads(s.clinical_analysis_json)
+                clinical_analysis = json.loads(str(s.clinical_analysis_json))
             if s.soap_report_json:
-                soap_report = json.loads(s.soap_report_json)
+                soap_report = json.loads(str(s.soap_report_json))
         except Exception as e:
             logger.warning(f"Error parsing session JSON for {s.id}: {e}")
 
@@ -614,7 +615,7 @@ def create_patient(payload: PatientCreateSchema, db: Session = Depends(get_db)):
     if not initials:
         initials = "PT"
 
-    vitals_json = json.dumps(payload.vitals.dict()) if payload.vitals else json.dumps({
+    vitals_json = json.dumps(payload.vitals.model_dump()) if payload.vitals else json.dumps({
         "bp": "120/80 mmHg",
         "hr": "72 bpm",
         "pain": "0/10",
@@ -711,7 +712,7 @@ def update_patient(patient_id: str, payload: PatientUpdateSchema, db: Session = 
         patient.preferred_doctor_name = payload.preferred_doctor_name
 
     if payload.vitals is not None:
-        patient.vitals_json = json.dumps(payload.vitals.dict())
+        patient.vitals_json = json.dumps(payload.vitals.model_dump())
 
     patient.demographics = f"{patient.age}{patient.gender} · {patient.id}"
 
@@ -986,13 +987,13 @@ def get_patient_sessions(patient_id: str, db: Session = Depends(get_db)):
         soap_report = {}
         try:
             if s.conversation_json:
-                conversation = json.loads(s.conversation_json)
+                conversation = json.loads(str(s.conversation_json))
             if s.ai_suggestions_json:
-                ai_suggestions = json.loads(s.ai_suggestions_json)
+                ai_suggestions = json.loads(str(s.ai_suggestions_json))
             if s.clinical_analysis_json:
-                clinical_analysis = json.loads(s.clinical_analysis_json)
+                clinical_analysis = json.loads(str(s.clinical_analysis_json))
             if s.soap_report_json:
-                soap_report = json.loads(s.soap_report_json)
+                soap_report = json.loads(str(s.soap_report_json))
         except Exception:
             pass
 

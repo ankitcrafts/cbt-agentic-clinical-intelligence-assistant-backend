@@ -563,8 +563,8 @@ def get_soap_feedback(encounter_id: str, db: Session = Depends(get_db)):
             "encounterId": r.encounter_id,
             "doctorId": r.doctor_id,
             "patientId": r.patient_id,
-            "originalSoap": json.loads(r.original_soap_json) if r.original_soap_json else {},
-            "editedSoap": json.loads(r.edited_soap_json) if r.edited_soap_json else {},
+            "originalSoap": json.loads(str(r.original_soap_json)) if r.original_soap_json else {},
+            "editedSoap": json.loads(str(r.edited_soap_json)) if r.edited_soap_json else {},
             "editReason": r.edit_reason,
             "editedSection": r.edited_section,
             "patientSummary": r.patient_summary,
@@ -614,28 +614,28 @@ def _serialize_session(s: PatientConsultationSession) -> dict:
     conversation = []
     if s.conversation_json:
         try:
-            conversation = json.loads(s.conversation_json)
+            conversation = json.loads(str(s.conversation_json))
         except Exception:
             conversation = []
 
     ai_suggestions = []
     if s.ai_suggestions_json:
         try:
-            ai_suggestions = json.loads(s.ai_suggestions_json)
+            ai_suggestions = json.loads(str(s.ai_suggestions_json))
         except Exception:
             ai_suggestions = []
 
     clinical_analysis = {}
     if s.clinical_analysis_json:
         try:
-            clinical_analysis = json.loads(s.clinical_analysis_json)
+            clinical_analysis = json.loads(str(s.clinical_analysis_json))
         except Exception:
             clinical_analysis = {}
 
     soap_report = {}
     if s.soap_report_json:
         try:
-            soap_report = json.loads(s.soap_report_json)
+            soap_report = json.loads(str(s.soap_report_json))
         except Exception:
             soap_report = {}
 
