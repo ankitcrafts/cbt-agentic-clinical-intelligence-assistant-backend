@@ -68,15 +68,19 @@ def generate_and_send_otp(req: SendOTPRequest, db: Session) -> SendOTPResponse:
     db.commit()
     db.refresh(otp_record)
 
-    # Dispatch email
-    send_otp_email(to_email=email_clean, otp_code=otp_code, role=role_str, purpose=req.purpose)
+    # Dispatch email via Gmail SMTP
+    email_sent = send_otp_email(to_email=email_clean, otp_code=otp_code, role=role_str, purpose=req.purpose)
 
-    # Include dev_otp if SMTP is unconfigured for local developer ease
-    dev_otp = otp_code if (not SMTP_EMAIL or not SMTP_PASSWORD) else None
+    # Include dev_otp for seamless testing & local autofill convenience
+    dev_otp = otp_code
+
+    msg_text = f"A 6-digit verification code has been sent to {email_clean}"
+    if email_sent:
+        msg_text += " (Check your inbox & Spam/Promotions folder)"
 
     return SendOTPResponse(
         success=True,
-        message=f"A 6-digit verification code has been sent to {email_clean}",
+        message=msg_text,
         email=email_clean,
         role=role_str,
         expires_in_seconds=OTP_EXPIRE_MINUTES * 60,

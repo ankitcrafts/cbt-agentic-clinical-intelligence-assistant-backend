@@ -122,6 +122,8 @@ class PatientConsultationSession(Base):
     consultation_mode: Mapped[str] = mapped_column(String(50), default="IN_PERSON")  # IN_PERSON, TELECONSULTATION, REMOTE_TEAMS, REMOTE_MEET, REMOTE_WHATSAPP, FILE_UPLOAD
     audio_source: Mapped[str] = mapped_column(String(50), default="MIC")  # MIC, SYSTEM_MIXED, FILE_UPLOAD
     status: Mapped[str] = mapped_column(String(50), default="COMPLETED")  # COMPLETED, IN_PROGRESS, ACTIVE
+    is_shared_with_patient: Mapped[bool] = mapped_column(Boolean, default=False)
+    shared_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -136,6 +138,7 @@ class PatientModel(Base):
     age: Mapped[int] = mapped_column(Integer, nullable=False, default=35)
     gender: Mapped[str] = mapped_column(String(20), nullable=False, default="M")
     phone: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     demographics: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     arrival_time: Mapped[str] = mapped_column(String(50), nullable=False, default="09:00 AM")
     arrival_status: Mapped[str] = mapped_column(String(50), nullable=False, default="ARRIVED")  # ARRIVED, SCHEDULED, IN_CONSULTATION, COMPLETED
