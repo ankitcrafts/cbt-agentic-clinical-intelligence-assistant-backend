@@ -1694,6 +1694,15 @@ def get_patient_portal_summary(
         PatientConsultationSession.is_shared_with_patient == True
     ).order_by(PatientConsultationSession.created_at.desc()).all()
 
+    # Fetch all consultation sessions for this patient
+    all_sessions = db.query(PatientConsultationSession).filter(
+        or_(
+            PatientConsultationSession.patient_id == patient.id,
+            PatientConsultationSession.patient_id == patient.pid,
+            PatientConsultationSession.patient_id == patient.id.replace('#', '')
+        )
+    ).order_by(PatientConsultationSession.session_number.desc(), PatientConsultationSession.created_at.desc()).all()
+
     # Base profile
     profile = {
         "name": patient.name,
@@ -1779,7 +1788,7 @@ def get_patient_portal_summary(
             "title": "Lisinopril — 10 mg",
             "badge": "active",
             "statusClass": "active",
-            "doctorDate": "Dr. Amara Osei · Issued 2026-04-03",
+            "doctorDate": f"{patient.assigned_doctor_name or 'Dr. Yuki Tanaka'} · Issued 2026-04-03",
             "instructions": "Once daily — morning",
             "refillInfo": "2 refills left",
             "soapReport": None
@@ -1806,88 +1815,190 @@ def get_patient_portal_summary(
         }
     ]
 
+    baseline_consultations = [
+        {
+            "id": "sess-base-2",
+            "sessionNumber": 2,
+            "sessionTitle": "Cardiology Review & Medication Titration",
+            "doctorName": patient.assigned_doctor_name or "Dr. Yuki Tanaka",
+            "doctorId": patient.assigned_doctor_id or "DOC-001",
+            "doctorSpecialty": "Senior Cardiologist",
+            "date": "2026-07-14",
+            "consultationMode": "In-Person Consultation",
+            "status": "COMPLETED",
+            "isShared": True,
+            "summary": "Follow-up consultation for Stage 1 Hypertension. Reviewed patient daily BP logs showing marked stabilization with Lisinopril 10mg. Patient reports tension headaches have resolved. Sodium restriction and aerobic walking routine verified.",
+            "assessment": "Essential Hypertension Stage 1 (ICD-10: I10), well controlled under current regimen.",
+            "plan": "1. Continue Lisinopril 10mg once daily in morning.\n2. Maintain low-sodium DASH dietary regimen.\n3. Schedule repeat lipid profile & BP recheck in 6 weeks.",
+            "subjective": "Marcus reports feeling much better with no morning headaches. Complies with Lisinopril 10mg daily. Has reduced dietary sodium and begun brisk walking 20 mins daily.",
+            "objective": "BP: 138/88 mmHg, HR: 72 bpm, Weight: 81 kg, Temp: 36.6 °C. Heart sounds S1/S2 normal, no murmurs. Lungs clear.",
+            "vitals": {
+                "bp": "138/88 mmHg",
+                "hr": "72 bpm",
+                "weight": "81 kg",
+                "temp": "36.6 °C"
+            },
+            "conversation": [
+                {"speaker": "Doctor", "role": "doctor", "text": "Good morning Marcus, how have you been feeling since starting the Lisinopril medication?", "time": "00:05"},
+                {"speaker": "Patient", "role": "patient", "text": "Good morning Doctor. The morning headaches have stopped and my home BP monitor shows lower numbers.", "time": "00:15"},
+                {"speaker": "Doctor", "role": "doctor", "text": "That is wonderful progress. Your reading today is 138/88 mmHg. We will continue this dosage, keep up the sodium reduction, and follow up in 6 weeks.", "time": "00:30"}
+            ],
+            "transcript": "Doctor: Good morning Marcus, how have you been feeling since starting the Lisinopril medication?\nPatient: Good morning Doctor. The morning headaches have stopped and my home BP monitor shows lower numbers.\nDoctor: That is wonderful progress. Your reading today is 138/88 mmHg. We will continue this dosage, keep up the sodium reduction, and follow up in 6 weeks.",
+            "soapReport": {
+                "subjective": "Marcus reports feeling much better with no morning headaches. Complies with Lisinopril 10mg daily. Has reduced dietary sodium and begun brisk walking 20 mins daily.",
+                "objective": "BP: 138/88 mmHg, HR: 72 bpm, Weight: 81 kg, Temp: 36.6 °C. Heart sounds S1/S2 normal, no murmurs. Lungs clear.",
+                "assessment": "Essential Hypertension Stage 1 (ICD-10: I10), well controlled under current regimen.",
+                "plan": "1. Continue Lisinopril 10mg once daily in morning.\n2. Maintain low-sodium DASH dietary regimen.\n3. Schedule repeat lipid profile & BP recheck in 6 weeks.",
+                "doctorName": patient.assigned_doctor_name or "Dr. Yuki Tanaka",
+                "date": "2026-07-14",
+                "sessionTitle": "Cardiology Review & Medication Titration",
+                "encounterId": "ENC-00847261-02",
+                "patientName": patient.name,
+                "mrn": patient.id
+            }
+        },
+        {
+            "id": "sess-base-1",
+            "sessionNumber": 1,
+            "sessionTitle": "Initial Hypertension Intake & Clinical Assessment",
+            "doctorName": "Dr. Amara Osei",
+            "doctorId": "DOC-003",
+            "doctorSpecialty": "Internal Medicine Specialist",
+            "date": "2026-04-03",
+            "consultationMode": "In-Person Consultation",
+            "status": "COMPLETED",
+            "isShared": False,
+            "summary": "Initial intake consultation for persistently elevated blood pressure readings (>150 mmHg). Conducted comprehensive cardiovascular evaluation, ordered resting ECG and basic metabolic panel. Initiated first-line ACE inhibitor Lisinopril 10mg.",
+            "assessment": "Newly diagnosed Essential Hypertension (Moderate). ICD-10: I10.",
+            "plan": "1. Initiated Lisinopril 10mg daily.\n2. Lifestyle modification: DASH diet with sodium < 2g/day.\n3. Follow-up consultation in 3 months with home blood pressure logs.",
+            "subjective": "Patient presented with elevated home blood pressure readings over the past 3 weeks. Reports occasional tension headaches and fatigue.",
+            "objective": "BP: 155/96 mmHg, HR: 78 bpm, Weight: 83 kg, Temp: 36.8 °C. ECG: Normal sinus rhythm without ischemic changes.",
+            "vitals": {
+                "bp": "155/96 mmHg",
+                "hr": "78 bpm",
+                "weight": "83 kg",
+                "temp": "36.8 °C"
+            },
+            "conversation": [
+                {"speaker": "Doctor", "role": "doctor", "text": "Hello Marcus, I see your home BP readings have been consistently elevated. Have you had any chest tightness or shortness of breath?", "time": "00:04"},
+                {"speaker": "Patient", "role": "patient", "text": "No chest tightness, but I get occasional tension headaches in the morning.", "time": "00:18"},
+                {"speaker": "Doctor", "role": "doctor", "text": "Your clinic BP today is 155/96 mmHg. We will start you on a low dose of Lisinopril 10mg to protect your heart and kidneys, along with dietary adjustments.", "time": "00:40"}
+            ],
+            "transcript": "Doctor: Hello Marcus, I see your home BP readings have been consistently elevated. Have you had any chest tightness or shortness of breath?\nPatient: No chest tightness, but I get occasional tension headaches in the morning.\nDoctor: Your clinic BP today is 155/96 mmHg. We will start you on a low dose of Lisinopril 10mg to protect your heart and kidneys, along with dietary adjustments.",
+            "soapReport": {
+                "subjective": "Patient presented with elevated home blood pressure readings over the past 3 weeks. Reports occasional tension headaches and fatigue.",
+                "objective": "BP: 155/96 mmHg, HR: 78 bpm, Weight: 83 kg, Temp: 36.8 °C. ECG: Normal sinus rhythm without ischemic changes.",
+                "assessment": "Newly diagnosed Essential Hypertension (Moderate). ICD-10: I10.",
+                "plan": "1. Initiated Lisinopril 10mg daily.\n2. Lifestyle modification: DASH diet with sodium < 2g/day.\n3. Follow-up consultation in 3 months with home blood pressure logs.",
+                "doctorName": "Dr. Amara Osei",
+                "date": "2026-04-03",
+                "sessionTitle": "Initial Hypertension Intake & Clinical Assessment",
+                "encounterId": "ENC-00847261-01",
+                "patientName": patient.name,
+                "mrn": patient.id
+            }
+        }
+    ]
+
     # Dynamically build records from shared sessions
     dynamic_records = []
     dynamic_prescriptions = []
     dynamic_alerts = []
+    dynamic_consultations = []
 
-    for session in shared_sessions:
-        soap_dict = {}
+    parsed_vitals = {
+        "bp": "138/88 mmHg",
+        "hr": "72 bpm",
+        "weight": "81 kg",
+        "temp": "36.6 °C"
+    }
+    if patient.vitals_json:
+        try:
+            v_dict = json.loads(patient.vitals_json)
+            parsed_vitals["bp"] = v_dict.get("bp", parsed_vitals["bp"])
+            parsed_vitals["hr"] = v_dict.get("hr", parsed_vitals["hr"])
+            parsed_vitals["pain"] = v_dict.get("pain", "0/10")
+            parsed_vitals["spo2"] = v_dict.get("spo2", "98%")
+            if "weight" in v_dict:
+                parsed_vitals["weight"] = v_dict["weight"]
+            if "temp" in v_dict:
+                parsed_vitals["temp"] = v_dict["temp"]
+        except Exception:
+            pass
+
+    for session in all_sessions:
+        s_soap = {}
         if session.soap_report_json:
             try:
-                soap_dict = json.loads(session.soap_report_json)
+                s_soap = json.loads(session.soap_report_json)
             except Exception:
-                soap_dict = {}
+                s_soap = {}
 
-        sess_date_str = session.shared_at.strftime("%Y-%m-%d") if session.shared_at else (
-            session.appointment_date.strftime("%Y-%m-%d") if session.appointment_date else "2026-08-13"
-        )
-        doctor_name = session.doctor_name or "Dr. Yuki Tanaka"
-
-        # 1. Add Medical Record for this shared consultation
-        parsed_vitals = {
-            "bp": "145/92 mmHg",
-            "hr": "78 bpm",
-            "weight": "82 kg",
-            "temp": "98.6 °F"
-        }
-        if patient.vitals_json:
+        conv_list = []
+        if session.conversation_json:
             try:
-                v_dict = json.loads(patient.vitals_json)
-                parsed_vitals["bp"] = v_dict.get("bp", parsed_vitals["bp"])
-                parsed_vitals["hr"] = v_dict.get("hr", parsed_vitals["hr"])
-                parsed_vitals["pain"] = v_dict.get("pain", "0/10")
-                parsed_vitals["spo2"] = v_dict.get("spo2", "98%")
+                conv_list = json.loads(session.conversation_json)
             except Exception:
-                pass
+                conv_list = []
 
-        dynamic_records.append({
+        sess_date_str = session.appointment_date.strftime("%Y-%m-%d") if session.appointment_date else (
+            session.shared_at.strftime("%Y-%m-%d") if session.shared_at else (
+                session.created_at.strftime("%Y-%m-%d") if session.created_at else "2026-08-13"
+            )
+        )
+        doctor_name = session.doctor_name or patient.assigned_doctor_name or "Dr. Yuki Tanaka"
+        doctor_id = session.doctor_id or patient.assigned_doctor_id or "DOC-001"
+
+        what_happened = (
+            s_soap.get("assessment") or 
+            s_soap.get("subjective") or 
+            patient.reason or 
+            "Clinical consultation conducted and recorded."
+        )
+
+        consultation_item = {
             "id": session.id,
-            "title": f"Cardiology — {session.session_title or 'SOAP Consultation'}",
-            "badge": "Verified SOAP",
-            "doctorDate": f"{doctor_name} · {sess_date_str}",
-            "notes": (soap_dict.get("assessment") or soap_dict.get("subjective") or patient.reason or "Clinical consultation completed and SOAP notes verified.")[:220],
+            "sessionNumber": session.session_number,
+            "sessionTitle": session.session_title or f"Consultation Session {session.session_number}",
+            "doctorName": doctor_name,
+            "doctorId": doctor_id,
+            "doctorSpecialty": "Attending Physician / Specialist",
+            "date": sess_date_str,
+            "consultationMode": (session.consultation_mode or "IN_PERSON").replace("_", " ").title(),
+            "status": session.status or "COMPLETED",
+            "isShared": session.is_shared_with_patient,
+            "summary": what_happened,
+            "assessment": s_soap.get("assessment", f"Consultation for {patient.condition or patient.reason or 'health review'}"),
+            "plan": s_soap.get("plan", "Follow prescribed clinical instructions and recommendations."),
+            "subjective": s_soap.get("subjective", f"Patient Marcus Delgado presented for clinical review with {doctor_name}."),
+            "objective": s_soap.get("objective", f"Vital signs: BP {parsed_vitals.get('bp', '120/80 mmHg')}, HR {parsed_vitals.get('hr', '72 bpm')}. Physical exam completed."),
             "vitals": parsed_vitals,
-            "hasSoap": True,
+            "conversation": conv_list,
+            "transcript": session.transcript or "",
             "soapReport": {
-                **soap_dict,
+                **s_soap,
                 "doctorName": doctor_name,
                 "date": sess_date_str,
                 "sessionTitle": session.session_title,
-                "encounterId": session.encounter_id,
+                "encounterId": session.encounter_id or f"ENC-{session.session_number}",
                 "patientName": patient.name,
                 "mrn": patient.id
-            }
-        })
+            } if (s_soap or session.is_shared_with_patient) else None
+        }
+        dynamic_consultations.append(consultation_item)
 
-        # 2. Extract Prescriptions from Plan & store the full SOAP Report inside each Rx
-        extracted_rx = _extract_prescriptions_from_soap(soap_dict, doctor_name, sess_date_str)
-        if extracted_rx:
-            for rx in extracted_rx:
-                rx["soapReport"] = {
-                    **soap_dict,
-                    "doctorName": doctor_name,
-                    "date": sess_date_str,
-                    "sessionTitle": session.session_title,
-                    "encounterId": session.encounter_id,
-                    "patientName": patient.name,
-                    "mrn": patient.id
-                }
-                dynamic_prescriptions.append(rx)
-        elif soap_dict:
-            # If no individual meds parsed, create an entry for the consultation's clinical prescription & care plan
-            dynamic_prescriptions.append({
-                "id": f"rx-soap-{session.id}",
-                "title": "Clinical Care Plan & Medication Directives",
-                "name": "Consultation Directives",
-                "dosage": "Active Plan",
-                "badge": "active",
-                "statusClass": "active",
-                "doctorDate": f"{doctor_name} · Issued {sess_date_str}",
-                "instructions": (soap_dict.get("plan") or "Follow verified doctor treatment plan")[:120],
-                "refillInfo": "Refills as per plan",
+        # 1. Add Medical Record for this shared consultation
+        if session.is_shared_with_patient:
+            dynamic_records.append({
+                "id": session.id,
+                "title": f"Cardiology — {session.session_title or 'SOAP Consultation'}",
+                "badge": "Verified SOAP",
+                "doctorDate": f"{doctor_name} · {sess_date_str}",
+                "notes": (s_soap.get("assessment") or s_soap.get("subjective") or patient.reason or "Clinical consultation completed and SOAP notes verified.")[:220],
+                "vitals": parsed_vitals,
+                "hasSoap": True,
                 "soapReport": {
-                    **soap_dict,
+                    **s_soap,
                     "doctorName": doctor_name,
                     "date": sess_date_str,
                     "sessionTitle": session.session_title,
@@ -1897,25 +2008,63 @@ def get_patient_portal_summary(
                 }
             })
 
-        # 3. Extract Follow-up Alerts from Plan
-        plan_str = soap_dict.get("plan", "")
-        if "4 weeks" in plan_str.lower() or "follow-up" in plan_str.lower() or "monitoring" in plan_str.lower():
-            dynamic_alerts.append({
-                "id": f"alert-{session.id}",
-                "title": "BP Recheck & Medication Efficacy Follow-up",
-                "doctor": f"With {doctor_name}",
-                "date": (datetime.now() + timedelta(days=28)).strftime("%Y-%m-%d"),
-                "priority": "High priority",
-                "priorityClass": "high",
-                "dotColor": "#ef4444",
-                "daysAway": "28 days away",
-                "soapReport": soap_dict
-            })
+            # 2. Extract Prescriptions from Plan
+            extracted_rx = _extract_prescriptions_from_soap(s_soap, doctor_name, sess_date_str)
+            if extracted_rx:
+                for rx in extracted_rx:
+                    rx["soapReport"] = {
+                        **s_soap,
+                        "doctorName": doctor_name,
+                        "date": sess_date_str,
+                        "sessionTitle": session.session_title,
+                        "encounterId": session.encounter_id,
+                        "patientName": patient.name,
+                        "mrn": patient.id
+                    }
+                    dynamic_prescriptions.append(rx)
+            elif s_soap:
+                dynamic_prescriptions.append({
+                    "id": f"rx-soap-{session.id}",
+                    "title": "Clinical Care Plan & Medication Directives",
+                    "name": "Consultation Directives",
+                    "dosage": "Active Plan",
+                    "badge": "active",
+                    "statusClass": "active",
+                    "doctorDate": f"{doctor_name} · Issued {sess_date_str}",
+                    "instructions": (s_soap.get("plan") or "Follow verified doctor treatment plan")[:120],
+                    "refillInfo": "Refills as per plan",
+                    "soapReport": {
+                        **s_soap,
+                        "doctorName": doctor_name,
+                        "date": sess_date_str,
+                        "sessionTitle": session.session_title,
+                        "encounterId": session.encounter_id,
+                        "patientName": patient.name,
+                        "mrn": patient.id
+                    }
+                })
+
+            # 3. Extract Follow-up Alerts from Plan
+            plan_str = s_soap.get("plan", "")
+            if "4 weeks" in plan_str.lower() or "follow-up" in plan_str.lower() or "monitoring" in plan_str.lower():
+                dynamic_alerts.append({
+                    "id": f"alert-{session.id}",
+                    "title": "BP Recheck & Medication Efficacy Follow-up",
+                    "doctor": f"With {doctor_name}",
+                    "date": (datetime.now() + timedelta(days=28)).strftime("%Y-%m-%d"),
+                    "priority": "High priority",
+                    "priorityClass": "high",
+                    "dotColor": "#ef4444",
+                    "daysAway": "28 days away",
+                    "soapReport": s_soap
+                })
 
     # Combine dynamic data with historical baseline
     final_alerts = dynamic_alerts + baseline_alerts if dynamic_alerts else baseline_alerts
     final_records = dynamic_records + baseline_records if dynamic_records else baseline_records
     final_prescriptions = dynamic_prescriptions + baseline_prescriptions if dynamic_prescriptions else baseline_prescriptions
+    final_consultations = dynamic_consultations + baseline_consultations if dynamic_consultations else baseline_consultations
+    last_consultation = final_consultations[0] if final_consultations else None
 
     return {
         "success": True,
@@ -1924,6 +2073,8 @@ def get_patient_portal_summary(
         "sharedSessionCount": len(shared_sessions),
         "followUpAlerts": final_alerts,
         "medicalRecords": final_records,
-        "prescriptions": final_prescriptions
+        "prescriptions": final_prescriptions,
+        "consultations": final_consultations,
+        "lastConsultation": last_consultation
     }
 
