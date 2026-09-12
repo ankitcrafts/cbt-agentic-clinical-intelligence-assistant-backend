@@ -189,6 +189,12 @@ async def upload_recording(
                 existing_for_encounter.audio_source = audio_source or "MIC"
                 existing_for_encounter.gdrive_file_id = gdrive_file_id
                 existing_for_encounter.gdrive_web_view_link = gdrive_web_view_link
+                if doctor_id:
+                    existing_for_encounter.doctor_id = doctor_id
+                if doctor_name:
+                    existing_for_encounter.doctor_name = doctor_name
+                if patient_name:
+                    existing_for_encounter.patient_name = patient_name
                 session_id = existing_for_encounter.id
             else:
                 next_session_number = (existing_sessions[0].session_number + 1) if existing_sessions else 1

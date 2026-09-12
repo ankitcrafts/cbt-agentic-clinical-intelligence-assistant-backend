@@ -32,6 +32,13 @@ class ShareSoapReportSchema(BaseModel):
     patient_summary: Optional[str] = None
 
 
+class CompleteConsultationSchema(BaseModel):
+    doctor_id: Optional[str] = None
+    doctor_name: Optional[str] = None
+    encounter_id: Optional[str] = None
+    notes: Optional[str] = None
+
+
 class VitalsSchema(BaseModel):
     bp: Optional[str] = "120/80 mmHg"
     hr: Optional[str] = "72 bpm"
@@ -1458,6 +1465,70 @@ def share_soap_report_with_patient(
         "encounterId": session_obj.encounter_id,
         "patientId": patient.id,
         "patientName": patient.name
+    }
+
+
+@router.post("/patients/{patient_id}/complete-consultation")
+@router.post("/patients/{patient_id}/close-consultation")
+def complete_patient_consultation(
+    patient_id: str,
+    payload: Optional[CompleteConsultationSchema] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Close and complete the consultation session for a patient.
+    - Sets arrival_status to COMPLETED
+    - Updates last_visit date to current date (e.g. 'September 12, 2026')
+    - Updates consultation session status to COMPLETED and records active doctor name & ID
+    """
+    ensure_initial_seed_data(db)
+
+    clean_id = patient_id.strip()
+    patient = db.query(PatientModel).filter(
+        or_(
+            PatientModel.id == clean_id,
+            PatientModel.pid == clean_id,
+            PatientModel.id == f"#{clean_id}",
+            PatientModel.name.ilike(f"%{clean_id}%")
+        )
+    ).first()
+
+    if not patient:
+        raise HTTPException(status_code=404, detail=f"Patient '{patient_id}' not found.")
+
+    today_str = datetime.now().strftime("%B %d, %Y")
+    patient.arrival_status = "COMPLETED"
+    patient.last_visit = today_str
+
+    doc_id = payload.doctor_id if (payload and payload.doctor_id) else (patient.assigned_doctor_id or "DOC-001")
+    doc_name = payload.doctor_name if (payload and payload.doctor_name) else (patient.assigned_doctor_name or "Dr. Yuki Tanaka")
+
+    latest_sess = db.query(PatientConsultationSession).filter(
+        (PatientConsultationSession.patient_id == patient.id) |
+        (PatientConsultationSession.patient_id == clean_id)
+    ).order_by(PatientConsultationSession.session_number.desc()).first()
+
+    if latest_sess:
+        latest_sess.status = "COMPLETED"
+        if doc_id:
+            latest_sess.doctor_id = doc_id
+        if doc_name:
+            latest_sess.doctor_name = doc_name
+
+    db.commit()
+    db.refresh(patient)
+
+    session_count = db.query(PatientConsultationSession).filter(
+        PatientConsultationSession.patient_id == patient.id
+    ).count()
+
+    logger.info(f"Consultation completed for patient {patient.name} ({patient.id}) with {doc_name}. Last visit set to {today_str}.")
+
+    return {
+        "success": True,
+        "message": f"Consultation session completed for {patient.name}. Last visit updated to {today_str}.",
+        "lastVisit": today_str,
+        "data": format_patient_dict(patient, session_count=session_count)
     }
 
 
