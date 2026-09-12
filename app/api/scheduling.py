@@ -7,7 +7,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_, desc
+from sqlalchemy import or_, and_, desc, func
 
 from app.core.database import get_db
 from app.models.models import PatientModel, DoctorSlotModel, PatientConsultationSession, User
@@ -242,7 +242,25 @@ def format_patient_dict(p: PatientModel, session_count: int = 0) -> Dict[str, An
 
 
 def ensure_initial_seed_data(db: Session):
-    """Seed default patients and doctor slots if database is freshly created."""
+    """Seed default patients, doctors in User table, and doctor slots if database is freshly created."""
+    # Seed default doctors in User table if not present
+    for doc in DEFAULT_DOCTORS:
+        existing_u = db.query(User).filter(or_(User.id == doc["id"], User.email == doc["email"])).first()
+        if not existing_u:
+            new_u = User(
+                id=doc["id"],
+                email=doc["email"],
+                full_name=doc["name"],
+                role="DOCTOR",
+                department=doc["department"],
+                specialization=doc["specialty"],
+                designation=f"{doc['specialty']} ({doc['department']})",
+                avatar_initials=doc["initials"],
+                is_active=doc["available"]
+            )
+            db.add(new_u)
+    db.commit()
+
     patient_count = db.query(PatientModel).count()
     if patient_count == 0:
         logger.info("Seeding initial hospital patients into database...")
@@ -465,6 +483,158 @@ def ensure_initial_seed_data(db: Session):
                 )
         db.add_all(slot_entries)
         db.commit()
+
+
+def get_all_doctors_from_db(db: Session) -> List[Dict[str, Any]]:
+    """
+    Fetch all active and registered doctors dynamically from the User database (role='DOCTOR').
+    Ensures newly signed up doctors automatically have timing slots and appear in all scheduling desks.
+    """
+    ensure_initial_seed_data(db)
+
+    # Fetch all doctors from User table (case-insensitive role check)
+    doctor_users = db.query(User).filter(func.upper(User.role) == "DOCTOR").all()
+
+    doctors_list = []
+    seen_ids = set()
+    seen_emails = set()
+    seen_names = set()
+
+    for u in doctor_users:
+        seen_ids.add(str(u.id).lower())
+        if u.email:
+            seen_emails.add(str(u.email).lower())
+
+        raw_name = (u.full_name or "").strip()
+        if not raw_name:
+            raw_name = u.email.split("@")[0].replace(".", " ").title()
+        
+        if not (raw_name.lower().startswith("dr.") or raw_name.lower().startswith("dr ")):
+            formatted_name = f"Dr. {raw_name}"
+        else:
+            formatted_name = raw_name
+
+        seen_names.add(formatted_name.lower())
+
+        specialty = u.specialization or u.department or "Senior Cardiologist"
+        department = u.department or "Cardiology"
+        initials = u.get_initials()
+
+        # Ensure doctor slots exist in DoctorSlotModel for this doctor
+        existing_slots = db.query(DoctorSlotModel).filter(DoctorSlotModel.doctor_id == u.id).all()
+        if not existing_slots:
+            standard_slots = [
+                ("09:00 AM", "30 min"),
+                ("09:45 AM", "30 min"),
+                ("10:30 AM", "30 min"),
+                ("11:15 AM", "30 min"),
+                ("02:00 PM", "30 min"),
+                ("02:45 PM", "30 min"),
+                ("03:30 PM", "30 min"),
+                ("04:15 PM", "30 min"),
+            ]
+            new_slots = []
+            for idx, (slot_time, duration) in enumerate(standard_slots):
+                slot_id = f"{u.id}-s{idx+1}"
+                matched_pat = db.query(PatientModel).filter(
+                    PatientModel.assigned_doctor_id == u.id,
+                    PatientModel.assigned_time_slot == slot_time
+                ).first()
+                new_slots.append(
+                    DoctorSlotModel(
+                        id=slot_id,
+                        doctor_id=u.id,
+                        doctor_name=formatted_name,
+                        time_slot=slot_time,
+                        duration=duration,
+                        status="BOOKED" if matched_pat else "AVAILABLE",
+                        booked_patient_id=matched_pat.id if matched_pat else None,
+                        booked_patient_name=matched_pat.name if matched_pat else None,
+                    )
+                )
+            db.add_all(new_slots)
+            db.commit()
+            existing_slots = db.query(DoctorSlotModel).filter(DoctorSlotModel.doctor_id == u.id).all()
+
+        slot_items = [
+            {
+                "id": s.id,
+                "time": s.time_slot,
+                "duration": s.duration,
+                "status": s.status,
+                "bookedPatientId": s.booked_patient_id,
+                "bookedPatientName": s.booked_patient_name,
+            }
+            for s in existing_slots
+        ]
+
+        # Dynamic queue count of patients assigned to this doctor
+        clean_search = formatted_name.replace("Dr.", "").strip()
+        queue_count = db.query(PatientModel).filter(
+            or_(
+                PatientModel.assigned_doctor_id == u.id,
+                PatientModel.assigned_doctor_name.ilike(f"%{clean_search}%"),
+                PatientModel.assigned_doctor_name.ilike(f"%{formatted_name}%")
+            ),
+            PatientModel.arrival_status.in_(["SCHEDULED", "IN_CONSULTATION", "ARRIVED"])
+        ).count()
+
+        doctors_list.append({
+            "id": u.id,
+            "name": formatted_name,
+            "initials": initials,
+            "specialty": specialty,
+            "department": department,
+            "email": u.email,
+            "available": True,
+            "dutyStatus": "On duty",
+            "queueCount": queue_count,
+            "slots": slot_items
+        })
+
+    # Include any DEFAULT_DOCTORS that are not already in User table
+    for doc in DEFAULT_DOCTORS:
+        doc_id_low = str(doc["id"]).lower()
+        doc_email_low = str(doc["email"]).lower()
+        doc_name_low = str(doc["name"]).lower()
+
+        if doc_id_low not in seen_ids and doc_email_low not in seen_emails and doc_name_low not in seen_names:
+            seen_ids.add(doc_id_low)
+            slots_in_db = db.query(DoctorSlotModel).filter(
+                DoctorSlotModel.doctor_id == doc["id"]
+            ).all()
+
+            slot_items = [
+                {
+                    "id": s.id,
+                    "time": s.time_slot,
+                    "duration": s.duration,
+                    "status": s.status,
+                    "bookedPatientId": s.booked_patient_id,
+                    "bookedPatientName": s.booked_patient_name,
+                }
+                for s in slots_in_db
+            ]
+
+            queue_count = db.query(PatientModel).filter(
+                PatientModel.assigned_doctor_id == doc["id"],
+                PatientModel.arrival_status.in_(["SCHEDULED", "IN_CONSULTATION", "ARRIVED"])
+            ).count()
+
+            doctors_list.append({
+                "id": doc["id"],
+                "name": doc["name"],
+                "initials": doc["initials"],
+                "specialty": doc["specialty"],
+                "department": doc["department"],
+                "email": doc["email"],
+                "available": doc["available"],
+                "dutyStatus": doc["dutyStatus"],
+                "queueCount": queue_count,
+                "slots": slot_items
+            })
+
+    return doctors_list
 
 
 # ==============================================================================
@@ -767,49 +937,14 @@ def delete_patient(patient_id: str, db: Session = Depends(get_db)):
 @router.get("/doctors")
 def list_doctors_with_slots(db: Session = Depends(get_db)):
     """
-    Get full list of hospital doctors with their real-time timing slots and availability.
+    Get full list of hospital doctors (including newly registered doctors from database)
+    with their real-time timing slots and availability.
     """
-    ensure_initial_seed_data(db)
-
-    results = []
-    for doc in DEFAULT_DOCTORS:
-        slots_in_db = db.query(DoctorSlotModel).filter(
-            DoctorSlotModel.doctor_id == doc["id"]
-        ).all()
-
-        slot_items = []
-        for s in slots_in_db:
-            slot_items.append({
-                "id": s.id,
-                "time": s.time_slot,
-                "duration": s.duration,
-                "status": s.status,
-                "bookedPatientId": s.booked_patient_id,
-                "bookedPatientName": s.booked_patient_name,
-            })
-
-        queue_count = db.query(PatientModel).filter(
-            PatientModel.assigned_doctor_id == doc["id"],
-            PatientModel.arrival_status.in_(["SCHEDULED", "IN_CONSULTATION", "ARRIVED"])
-        ).count()
-
-        results.append({
-            "id": doc["id"],
-            "name": doc["name"],
-            "initials": doc["initials"],
-            "specialty": doc["specialty"],
-            "department": doc["department"],
-            "email": doc["email"],
-            "available": doc["available"],
-            "dutyStatus": doc["dutyStatus"],
-            "queueCount": queue_count,
-            "slots": slot_items
-        })
-
+    doctors = get_all_doctors_from_db(db)
     return {
         "success": True,
-        "count": len(results),
-        "data": results
+        "count": len(doctors),
+        "data": doctors
     }
 
 
@@ -823,6 +958,13 @@ def get_doctor_slots(doctor_id: str, db: Session = Depends(get_db)):
     slots = db.query(DoctorSlotModel).filter(
         DoctorSlotModel.doctor_id == doctor_id
     ).all()
+
+    if not slots:
+        # Trigger get_all_doctors_from_db to seed slots if newly registered doctor
+        get_all_doctors_from_db(db)
+        slots = db.query(DoctorSlotModel).filter(
+            DoctorSlotModel.doctor_id == doctor_id
+        ).all()
 
     if not slots:
         raise HTTPException(status_code=404, detail=f"No slots found for doctor ID '{doctor_id}'.")
@@ -848,7 +990,7 @@ def get_doctor_slots(doctor_id: str, db: Session = Depends(get_db)):
 def assign_doctor_and_slot(payload: AssignDoctorSlotSchema, db: Session = Depends(get_db)):
     """
     Administrator assigns or distributes a doctor and timing slot to a patient.
-    Handles preferred doctor choice of patient or administrative slot allocation.
+    Handles preferred doctor choice of patient or administrative slot allocation across all registered doctors.
     """
     ensure_initial_seed_data(db)
 
@@ -858,17 +1000,41 @@ def assign_doctor_and_slot(payload: AssignDoctorSlotSchema, db: Session = Depend
     if not patient:
         raise HTTPException(status_code=404, detail=f"Patient '{payload.patient_id}' not found.")
 
-    doc = next((d for d in DEFAULT_DOCTORS if d["id"] == payload.doctor_id), None)
+    all_docs = get_all_doctors_from_db(db)
+    doc = next((d for d in all_docs if d["id"] == payload.doctor_id or d["name"].lower() == payload.doctor_id.lower()), None)
+    if not doc and payload.doctor_name:
+        doc = next((d for d in all_docs if d["name"].lower() == payload.doctor_name.lower() or payload.doctor_name.lower() in d["name"].lower()), None)
+
+    if not doc:
+        u = db.query(User).filter(and_(User.id == payload.doctor_id, User.role == "DOCTOR")).first()
+        if u:
+            doc_name = u.full_name if (u.full_name and u.full_name.startswith("Dr.")) else f"Dr. {u.full_name or 'Doctor'}"
+            doc = {
+                "id": u.id,
+                "name": doc_name,
+                "specialty": u.specialization or u.department or "General Physician"
+            }
+
     if not doc:
         raise HTTPException(status_code=404, detail=f"Doctor '{payload.doctor_id}' not found.")
 
     slot = db.query(DoctorSlotModel).filter(
-        DoctorSlotModel.doctor_id == payload.doctor_id,
+        DoctorSlotModel.doctor_id == doc["id"],
         DoctorSlotModel.time_slot == payload.time_slot
     ).first()
 
     if not slot:
-        raise HTTPException(status_code=400, detail=f"Timing slot '{payload.time_slot}' does not exist for {doc['name']}.")
+        slot = DoctorSlotModel(
+            id=f"{doc['id']}-{payload.time_slot.replace(' ', '').replace(':', '')}",
+            doctor_id=doc["id"],
+            doctor_name=doc["name"],
+            time_slot=payload.time_slot,
+            duration=payload.duration or "30 min",
+            status="AVAILABLE"
+        )
+        db.add(slot)
+        db.commit()
+        db.refresh(slot)
 
     if slot.status == "BOOKED" and slot.booked_patient_id and slot.booked_patient_id != patient.id:
         raise HTTPException(
@@ -891,6 +1057,7 @@ def assign_doctor_and_slot(payload: AssignDoctorSlotSchema, db: Session = Depend
     slot.status = "BOOKED"
     slot.booked_patient_id = patient.id
     slot.booked_patient_name = patient.name
+    slot.doctor_name = doc["name"]
 
     # Update patient record
     patient.assigned_doctor_id = doc["id"]
@@ -928,24 +1095,60 @@ def get_doctor_queue(doctor_id_or_name: str, db: Session = Depends(get_db)):
     """
     Dynamic queue for Doctor's screen.
     Returns patient list assigned to this doctor via admin distribution or patient preferred booking.
+    Works for default doctors as well as newly registered doctors.
     """
     ensure_initial_seed_data(db)
+    all_docs = get_all_doctors_from_db(db)
 
+    clean_term = doctor_id_or_name.strip().lower()
     matched_doc = None
-    for doc in DEFAULT_DOCTORS:
-        if (
-            doc["id"].lower() == doctor_id_or_name.lower() or
-            doc["name"].lower() in doctor_id_or_name.lower() or
-            doctor_id_or_name.lower() in doc["name"].lower()
-        ):
+
+    for doc in all_docs:
+        if doc["id"].lower() == clean_term:
             matched_doc = doc
             break
 
-    doc_id = matched_doc["id"] if matched_doc else "DOC-001"
-    doc_name = matched_doc["name"] if matched_doc else "Dr. Yuki Tanaka"
+    if not matched_doc:
+        for doc in all_docs:
+            if (
+                clean_term in doc["name"].lower()
+                or doc["name"].lower() in clean_term
+                or (doc.get("email") and clean_term in doc["email"].lower())
+            ):
+                matched_doc = doc
+                break
+
+    if not matched_doc:
+        u = db.query(User).filter(
+            or_(
+                User.id.ilike(f"%{clean_term}%"),
+                User.full_name.ilike(f"%{clean_term}%"),
+                User.email.ilike(f"%{clean_term}%")
+            ),
+            User.role == "DOCTOR"
+        ).first()
+        if u:
+            doc_name = u.full_name if (u.full_name and u.full_name.startswith("Dr.")) else f"Dr. {u.full_name or 'Doctor'}"
+            matched_doc = {
+                "id": u.id,
+                "name": doc_name,
+                "email": u.email
+            }
+
+    doc_id = matched_doc["id"] if matched_doc else doctor_id_or_name
+    doc_name = matched_doc["name"] if matched_doc else doctor_id_or_name
+    clean_name = doc_name.replace("Dr.", "").strip()
 
     patients = db.query(PatientModel).filter(
-        PatientModel.assigned_doctor_id == doc_id
+        or_(
+            PatientModel.assigned_doctor_id == doc_id,
+            PatientModel.assigned_doctor_name.ilike(f"%{clean_name}%"),
+            PatientModel.assigned_doctor_name.ilike(f"%{doc_name}%"),
+            and_(
+                PatientModel.preferred_doctor_name.ilike(f"%{clean_name}%"),
+                PatientModel.is_preferred_doctor_choice == True
+            )
+        )
     ).order_by(PatientModel.assigned_time_slot.asc()).all()
 
     queue_items = []
