@@ -1,6 +1,8 @@
 import uuid
 import secrets
 import logging
+import re
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -11,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import JWT_SECRET_KEY, JWT_ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, OTP_EXPIRE_MINUTES, SMTP_EMAIL, SMTP_PASSWORD
 from app.core.database import get_db
-from app.models.models import User, OTPVerification
+from app.models.models import User, OTPVerification, PatientModel
 from app.schemas.auth import SendOTPRequest, SendOTPResponse, VerifyOTPRequest, UpdateProfileRequest, AuthResponse, UserProfileResponse, UserRole
 from app.services.email_service import send_otp_email
 
@@ -153,8 +155,16 @@ def verify_otp_and_authenticate(req: VerifyOTPRequest, db: Session) -> AuthRespo
     if not user:
         is_new_user = True
         user_id = generate_unique_clinical_id(active_role, db)
-        # For a brand new real user, full_name is either what was passed or None (prompting profile setup)
-        full_name = req.full_name.strip() if req.full_name and req.full_name.strip() else None
+        
+        # Determine full_name for new user
+        if req.full_name and req.full_name.strip():
+            full_name = req.full_name.strip()
+        elif active_role == "PATIENT":
+            raw_username = email_clean.split('@')[0]
+            clean_name = re.sub(r'[\d_.]+', ' ', raw_username).strip().title()
+            full_name = clean_name if len(clean_name) >= 2 else "New Patient"
+        else:
+            full_name = None
 
         user = User(
             id=user_id,
@@ -169,6 +179,45 @@ def verify_otp_and_authenticate(req: VerifyOTPRequest, db: Session) -> AuthRespo
         db.commit()
         db.refresh(user)
         logger.info(f"Created new {active_role} user with ID {user.id}: {email_clean}")
+
+        # If PATIENT, also ensure patient record exists in PostgreSQL patients table
+        if active_role == "PATIENT":
+            existing_pat = db.query(PatientModel).filter(
+                (PatientModel.email == email_clean) | (PatientModel.id == user_id)
+            ).first()
+            if not existing_pat:
+                id_num = f"{uuid.uuid4().int % 9000000 + 1000000}"
+                pat_id = f"#{id_num}"
+                pat_name = full_name or "New Patient"
+                initials = "".join([part[0] for part in pat_name.split() if part])[:2].upper() or "PT"
+                new_patient = PatientModel(
+                    id=pat_id,
+                    pid=f"P-{id_num}",
+                    name=pat_name,
+                    initials=initials,
+                    age=35,
+                    gender="M",
+                    phone="+1 (555) 000-0000",
+                    email=email_clean,
+                    demographics=f"35M · {pat_id}",
+                    arrival_time=datetime.now().strftime("%I:%M %p"),
+                    arrival_status="ARRIVED",
+                    reason="General Health Consultation",
+                    condition="Triage Assessment",
+                    last_visit="—",
+                    vitals_json=json.dumps({
+                        "bp": "120/80 mmHg",
+                        "hr": "72 bpm",
+                        "pain": "0/10",
+                        "spo2": "98%",
+                        "temp": "36.6 °C"
+                    }),
+                    visit_type="New Patient",
+                    booking_notes="Self-registered via Patient OTP Sign-in."
+                )
+                db.add(new_patient)
+                db.commit()
+                logger.info(f"Created PatientModel {pat_id} for {email_clean}")
     else:
         # Strict RBAC Check on existing user: DO NOT allow cross-role hijacking
         if user.role != active_role:

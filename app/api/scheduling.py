@@ -918,28 +918,48 @@ def create_patient(payload: PatientCreateSchema, db: Session = Depends(get_db)):
 @router.put("/patients/{patient_id}")
 def update_patient(patient_id: str, payload: PatientUpdateSchema, db: Session = Depends(get_db)):
     """
-    Update patient triage information, vitals, visit status, or notes.
+    Update patient triage information, vitals, visit status, or personal profile.
+    Syncs with User table when name or phone number changes.
     """
-    patient = db.query(PatientModel).filter(PatientModel.id == patient_id).first()
-    if not patient:
-        patient = db.query(PatientModel).filter(PatientModel.pid == patient_id).first()
+    clean_id = patient_id.strip()
+    patient = db.query(PatientModel).filter(
+        or_(
+            PatientModel.id == clean_id,
+            PatientModel.pid == clean_id,
+            PatientModel.id == f"#{clean_id}",
+            PatientModel.email.ilike(clean_id),
+            PatientModel.name.ilike(f"%{clean_id}%")
+        )
+    ).first()
+
     if not patient:
         raise HTTPException(status_code=404, detail=f"Patient '{patient_id}' not found.")
 
-    if payload.name is not None:
+    if payload.name is not None and payload.name.strip():
         patient.name = payload.name.strip()
+        patient.initials = "".join([part[0] for part in patient.name.split() if part])[:2].upper() or "PT"
+        if patient.email:
+            u = db.query(User).filter(User.email.ilike(patient.email)).first()
+            if u:
+                u.full_name = patient.name
     if payload.age is not None:
         patient.age = payload.age
-    if payload.gender is not None:
-        patient.gender = payload.gender
+    if payload.gender is not None and payload.gender.strip():
+        patient.gender = payload.gender.strip()
     if payload.phone is not None:
         patient.phone = payload.phone.strip()
+        if patient.email:
+            u = db.query(User).filter(User.email.ilike(patient.email)).first()
+            if u:
+                u.phone_number = patient.phone
+    if payload.email is not None and payload.email.strip():
+        patient.email = payload.email.strip().lower()
     if payload.arrival_status is not None:
         patient.arrival_status = payload.arrival_status
     if payload.reason is not None:
-        patient.reason = payload.reason
+        patient.reason = payload.reason.strip()
     if payload.condition is not None:
-        patient.condition = payload.condition
+        patient.condition = payload.condition.strip()
     if payload.last_visit is not None:
         patient.last_visit = payload.last_visit
     if payload.visit_type is not None:
@@ -1611,12 +1631,55 @@ def get_patient_portal_summary(
             PatientModel.pid == clean_target,
             PatientModel.id == f"#{clean_target}",
             PatientModel.phone == clean_target,
+            PatientModel.email.ilike(clean_target),
             PatientModel.name.ilike(f"%{clean_target}%")
         )
     ).first()
 
-    # Default fallback for demo / test logins
-    if not patient and ("patient" in clean_target.lower() or "@" in clean_target or clean_target in ["1", "demo"]):
+    # Auto-provision PatientModel if User exists with this email or ID
+    if not patient:
+        u = db.query(User).filter(
+            or_(
+                User.email.ilike(clean_target),
+                User.id == clean_target
+            )
+        ).first()
+        if u and u.role == "PATIENT":
+            id_num = f"{uuid.uuid4().int % 9000000 + 1000000}"
+            pat_id = f"#{id_num}"
+            pat_name = u.full_name or clean_target.split('@')[0].replace('.', ' ').title()
+            initials = "".join([part[0] for part in pat_name.split() if part])[:2].upper() or "PT"
+            patient = PatientModel(
+                id=pat_id,
+                pid=f"P-{id_num}",
+                name=pat_name,
+                initials=initials,
+                age=35,
+                gender="M",
+                phone=u.phone_number or "+1 (555) 000-0000",
+                email=u.email,
+                demographics=f"35M · {pat_id}",
+                arrival_time=datetime.now().strftime("%I:%M %p"),
+                arrival_status="ARRIVED",
+                reason="General Consultation",
+                condition="Triage Assessment",
+                last_visit="—",
+                vitals_json=json.dumps({
+                    "bp": "120/80 mmHg",
+                    "hr": "72 bpm",
+                    "pain": "0/10",
+                    "spo2": "98%",
+                    "temp": "36.6 °C"
+                }),
+                visit_type="New Patient",
+                booking_notes="Self-registered via Patient Portal."
+            )
+            db.add(patient)
+            db.commit()
+            db.refresh(patient)
+
+    # Fallback to Marcus Delgado only if no user / demo target
+    if not patient and ("patient" in clean_target.lower() or clean_target in ["1", "demo"]):
         patient = db.query(PatientModel).filter(PatientModel.id == "#00847261").first()
 
     if not patient:
@@ -1634,12 +1697,15 @@ def get_patient_portal_summary(
     # Base profile
     profile = {
         "name": patient.name,
-        "dob": "1984-03-12",
+        "dob": "1991-05-18",
         "mrn": patient.id,
         "age": patient.age,
         "gender": patient.gender,
-        "phone": patient.phone,
-        "condition": patient.condition
+        "phone": patient.phone or "+1 (555) 000-0000",
+        "email": patient.email or "",
+        "reason": patient.reason or "General Health Review",
+        "condition": patient.condition or "Triage Review",
+        "lastVisit": patient.last_visit or "—"
     }
 
     # Baseline seed data for Marcus Delgado
