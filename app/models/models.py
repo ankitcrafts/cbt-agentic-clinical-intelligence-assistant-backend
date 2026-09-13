@@ -175,6 +175,28 @@ class DoctorSlotModel(Base):
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class DoctorModel(Base):
+    __tablename__ = "doctors"
+
+    id: Mapped[str] = mapped_column(String(50), primary_key=True)  # e.g. "DOC-001"
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    initials: Mapped[str] = mapped_column(String(10), nullable=False, default="DR")
+    specialty: Mapped[str] = mapped_column(String(255), nullable=False, default="General Physician")
+    department: Mapped[str] = mapped_column(String(255), nullable=False, default="Internal Medicine")
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default="+1 (555) 000-0000")
+    room: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, default="Suite 101")
+    experience: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, default="Attending Specialist")
+    qualification: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, default="MD, MBBS")
+    is_new_upcoming: Mapped[bool] = mapped_column(Boolean, default=False)
+    shift_timing: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, default="09:00 AM - 05:00 PM")
+    available: Mapped[bool] = mapped_column(Boolean, default=True)
+    duty_status: Mapped[str] = mapped_column(String(50), default="On duty")  # On duty, Off duty, In consultation
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+
 
 
 

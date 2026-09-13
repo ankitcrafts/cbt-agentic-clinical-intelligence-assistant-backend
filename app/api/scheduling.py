@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, desc, func
 
 from app.core.database import get_db
-from app.models.models import PatientModel, DoctorSlotModel, PatientConsultationSession, User, SOAPFeedback, OTPVerification
+from app.models.models import PatientModel, DoctorSlotModel, PatientConsultationSession, User, SOAPFeedback, OTPVerification, DoctorModel
 from app.services.email_service import send_otp_email
 
 logger = logging.getLogger(__name__)
@@ -98,6 +98,42 @@ class AssignDoctorSlotSchema(BaseModel):
     booking_notes: Optional[str] = None
 
 
+class DoctorCreateSchema(BaseModel):
+    name: str = Field(..., examples=["Dr. Maya Lin"])
+    email: str = Field(..., examples=["maya.lin@stmercy.org"])
+    specialty: str = Field("General Physician", examples=["Cardiologist"])
+    department: str = Field("Internal Medicine", examples=["Cardiology"])
+    phone: Optional[str] = "+1 (555) 000-0000"
+    room: Optional[str] = "Suite 101"
+    experience: Optional[str] = "Senior Consultant"
+    qualification: Optional[str] = "MD, MBBS"
+    is_new_upcoming: Optional[bool] = False
+    duty_status: Optional[str] = "On duty"
+    shift_timing: Optional[str] = "09:00 AM - 05:00 PM"
+    slot_duration: Optional[str] = "30 min"
+
+
+class DoctorUpdateSchema(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    specialty: Optional[str] = None
+    department: Optional[str] = None
+    phone: Optional[str] = None
+    room: Optional[str] = None
+    experience: Optional[str] = None
+    qualification: Optional[str] = None
+    is_new_upcoming: Optional[bool] = None
+    duty_status: Optional[str] = None
+    available: Optional[bool] = None
+    shift_timing: Optional[str] = None
+
+
+class DoctorSlotCreateSchema(BaseModel):
+    time_slot: str = Field(..., examples=["09:00 AM"])
+    duration: Optional[str] = "30 min"
+    status: Optional[str] = "AVAILABLE"
+
+
 class CreateConsultationSessionSchema(BaseModel):
     session_title: str = Field("Consultation Session", examples=["Session 2: Follow-up Consultation"])
     encounter_id: Optional[str] = None
@@ -126,6 +162,12 @@ DEFAULT_DOCTORS: List[Dict[str, Any]] = [
         "specialty": "Senior Cardiologist",
         "department": "Cardiology",
         "email": "yuki.tanaka@stmercy.org",
+        "phone": "+1 (555) 201-4401",
+        "room": "Suite 204",
+        "experience": "Senior Consultant",
+        "qualification": "MD, FACC, FSCAI",
+        "isNewUpcoming": False,
+        "shiftTiming": "09:00 AM - 05:00 PM",
         "available": True,
         "dutyStatus": "On duty",
         "default_slots": [
@@ -146,6 +188,12 @@ DEFAULT_DOCTORS: List[Dict[str, Any]] = [
         "specialty": "Interventional Cardiologist",
         "department": "Cardiology",
         "email": "rahul.sharma@stmercy.org",
+        "phone": "+1 (555) 201-4402",
+        "room": "Suite 206",
+        "experience": "Attending Specialist",
+        "qualification": "MD, DM Cardiology",
+        "isNewUpcoming": False,
+        "shiftTiming": "09:30 AM - 04:30 PM",
         "available": True,
         "dutyStatus": "On duty",
         "default_slots": [
@@ -164,6 +212,12 @@ DEFAULT_DOCTORS: List[Dict[str, Any]] = [
         "specialty": "Neurologist",
         "department": "Neurology",
         "email": "neha.verma@stmercy.org",
+        "phone": "+1 (555) 201-4403",
+        "room": "Suite 310",
+        "experience": "Senior Consultant",
+        "qualification": "MD, DM Neurology",
+        "isNewUpcoming": False,
+        "shiftTiming": "09:00 AM - 04:00 PM",
         "available": True,
         "dutyStatus": "On duty",
         "default_slots": [
@@ -182,6 +236,12 @@ DEFAULT_DOCTORS: List[Dict[str, Any]] = [
         "specialty": "Orthopedic Surgeon",
         "department": "Orthopedics",
         "email": "amit.patel@stmercy.org",
+        "phone": "+1 (555) 201-4404",
+        "room": "Suite 108",
+        "experience": "Attending Surgeon",
+        "qualification": "MS Orthopedics, FRCS",
+        "isNewUpcoming": False,
+        "shiftTiming": "09:30 AM - 03:00 PM",
         "available": True,
         "dutyStatus": "On duty",
         "default_slots": [
@@ -198,10 +258,18 @@ DEFAULT_DOCTORS: List[Dict[str, Any]] = [
         "specialty": "Pediatrician",
         "department": "Pediatrics",
         "email": "sneha.iyer@stmercy.org",
+        "phone": "+1 (555) 201-4405",
+        "room": "Exam Room 2B",
+        "experience": "Upcoming Fellow",
+        "qualification": "MD Pediatrics",
+        "isNewUpcoming": True,
+        "shiftTiming": "09:00 AM - 01:00 PM",
         "available": False,
         "dutyStatus": "Off duty",
         "default_slots": [
             ("09:00 AM", "30 min"),
+            ("09:45 AM", "30 min"),
+            ("10:30 AM", "30 min"),
         ]
     },
     {
@@ -211,6 +279,12 @@ DEFAULT_DOCTORS: List[Dict[str, Any]] = [
         "specialty": "General Physician",
         "department": "Internal Medicine",
         "email": "vikram.singh@stmercy.org",
+        "phone": "+1 (555) 201-4406",
+        "room": "Suite 102",
+        "experience": "Attending Physician",
+        "qualification": "MBBS, MD Internal Medicine",
+        "isNewUpcoming": False,
+        "shiftTiming": "09:00 AM - 03:00 PM",
         "available": True,
         "dutyStatus": "On duty",
         "default_slots": [
@@ -221,6 +295,53 @@ DEFAULT_DOCTORS: List[Dict[str, Any]] = [
             ("02:00 PM", "30 min"),
         ]
     },
+    {
+        "id": "DOC-007",
+        "name": "Dr. Maya Lin",
+        "initials": "ML",
+        "specialty": "Clinical Psychologist",
+        "department": "Psychiatry",
+        "email": "maya.lin@stmercy.org",
+        "phone": "+1 (555) 201-4407",
+        "room": "Suite 405",
+        "experience": "New Upcoming Specialist",
+        "qualification": "PsyD, CBT Certified",
+        "isNewUpcoming": True,
+        "shiftTiming": "10:00 AM - 04:00 PM",
+        "available": True,
+        "dutyStatus": "On duty",
+        "default_slots": [
+            ("10:00 AM", "45 min"),
+            ("11:00 AM", "45 min"),
+            ("02:00 PM", "45 min"),
+            ("03:00 PM", "45 min"),
+        ]
+    },
+    {
+        "id": "DOC-008",
+        "name": "Dr. Ankit Kumar",
+        "initials": "AK",
+        "specialty": "Associate Cardiologist",
+        "department": "Cardiology",
+        "email": "ankitkumar021303@gmail.com",
+        "phone": "+1 (555) 201-4408",
+        "room": "Suite 201",
+        "experience": "Senior Resident",
+        "qualification": "MD Cardiology",
+        "isNewUpcoming": False,
+        "shiftTiming": "09:00 AM - 05:00 PM",
+        "available": True,
+        "dutyStatus": "On duty",
+        "default_slots": [
+            ("09:00 AM", "30 min"),
+            ("09:45 AM", "30 min"),
+            ("10:30 AM", "30 min"),
+            ("11:15 AM", "30 min"),
+            ("02:00 PM", "30 min"),
+            ("02:45 PM", "30 min"),
+            ("03:30 PM", "30 min"),
+        ]
+    }
 ]
 
 
@@ -607,6 +728,12 @@ def get_all_doctors_from_db(db: Session) -> List[Dict[str, Any]]:
             "specialty": specialty,
             "department": department,
             "email": u.email,
+            "phone": u.phone_number or "+1 (555) 000-0000",
+            "room": "Suite 101",
+            "experience": "Senior Specialist",
+            "qualification": "MD, MBBS",
+            "isNewUpcoming": False,
+            "shiftTiming": "09:00 AM - 05:00 PM",
             "available": True,
             "dutyStatus": "On duty",
             "queueCount": queue_count,
@@ -649,8 +776,14 @@ def get_all_doctors_from_db(db: Session) -> List[Dict[str, Any]]:
                 "specialty": doc["specialty"],
                 "department": doc["department"],
                 "email": doc["email"],
-                "available": doc["available"],
-                "dutyStatus": doc["dutyStatus"],
+                "phone": doc.get("phone", "+1 (555) 201-4400"),
+                "room": doc.get("room", "Suite 201"),
+                "experience": doc.get("experience", "Senior Consultant"),
+                "qualification": doc.get("qualification", "MD"),
+                "isNewUpcoming": doc.get("isNewUpcoming", False),
+                "shiftTiming": doc.get("shiftTiming", "09:00 AM - 05:00 PM"),
+                "available": doc.get("available", True),
+                "dutyStatus": doc.get("dutyStatus", "On duty"),
                 "queueCount": queue_count,
                 "slots": slot_items
             })
@@ -779,10 +912,12 @@ def get_patient_detail(patient_id: str, db: Session = Depends(get_db)):
             "status": s.status,
             "consultation_mode": s.consultation_mode,
             "audio_source": s.audio_source,
+            "gdrive_web_view_link": s.gdrive_web_view_link,
             "created_at": s.created_at.isoformat() if s.created_at else None,
         })
 
-    patient_dict = format_patient_dict(patient, session_count=len(session_list))
+    session_count = len(session_list)
+    patient_dict = format_patient_dict(patient, session_count=session_count)
     patient_dict["sessions"] = session_list
 
     return {
@@ -792,88 +927,73 @@ def get_patient_detail(patient_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/patients")
-def create_patient(payload: PatientCreateSchema, db: Session = Depends(get_db)):
+def register_walkin_patient(payload: PatientCreateSchema, db: Session = Depends(get_db)):
     """
-    Register a new walk-in or returning patient at reception.
+    Register a new walk-in patient at clinic front desk.
+    Optionally assign a doctor & slot immediately, or leave unassigned in arriving triage queue.
     """
     ensure_initial_seed_data(db)
 
     id_num = f"{uuid.uuid4().int % 9000000 + 1000000}"
     new_id = f"#{id_num}"
-    pid = f"P-{id_num}"
+    new_pid = f"P-{id_num}"
 
-    initials = "".join([part[0] for part in payload.name.strip().split() if part])[:2].upper()
-    if not initials:
-        initials = "PT"
-
-    vitals_json = json.dumps(payload.vitals.model_dump()) if payload.vitals else json.dumps({
-        "bp": "120/80 mmHg",
-        "hr": "72 bpm",
-        "pain": "0/10",
-        "spo2": "98%",
-        "temp": "36.6 °C"
-    })
-
-    is_preferred = bool(payload.is_preferred_doctor_choice or payload.preferred_doctor_name)
-    pref_doc_name = payload.preferred_doctor_name
-
-    arrival_time = datetime.now().strftime("%I:%M %p")
-    demographics = f"{payload.age}{payload.gender} · {new_id}"
-
-    email_clean = payload.email.strip().lower() if (payload.email and payload.email.strip()) else None
+    initials = "".join([part[0] for part in payload.name.split() if part])[:2].upper() or "PT"
+    vitals_dict = payload.vitals.model_dump() if payload.vitals else {
+        "bp": "120/80 mmHg", "hr": "72 bpm", "pain": "0/10", "spo2": "98%", "temp": "36.6 °C"
+    }
 
     new_patient = PatientModel(
         id=new_id,
-        pid=pid,
+        pid=new_pid,
         name=payload.name.strip(),
         initials=initials,
         age=payload.age,
         gender=payload.gender,
         phone=payload.phone.strip(),
-        email=email_clean,
-        demographics=demographics,
-        arrival_time=arrival_time,
+        email=payload.email.strip().lower() if payload.email else None,
+        demographics=f"{payload.age}{payload.gender} · {new_id}",
+        arrival_time=datetime.now().strftime("%I:%M %p"),
         arrival_status="SCHEDULED" if payload.assigned_doctor_id else "ARRIVED",
         reason=payload.reason.strip(),
-        condition=payload.condition.strip() or "Triage Review",
+        condition=payload.condition.strip(),
         last_visit="—",
-        vitals_json=vitals_json,
+        vitals_json=json.dumps(vitals_dict),
         assigned_doctor_id=payload.assigned_doctor_id,
         assigned_doctor_name=payload.assigned_doctor_name,
         assigned_time_slot=payload.assigned_time_slot,
-        is_preferred_doctor_choice=is_preferred,
-        preferred_doctor_name=pref_doc_name,
+        assigned_duration="30 min",
+        is_preferred_doctor_choice=payload.is_preferred_doctor_choice or False,
+        preferred_doctor_name=payload.preferred_doctor_name,
         visit_type=payload.visit_type or "New Patient",
-        booking_notes=payload.booking_notes or ("Patient requested preferred physician." if is_preferred else "Registered at front desk.")
+        booking_notes=payload.booking_notes or ("Front desk arrival registration"),
     )
 
     db.add(new_patient)
 
-    # If an email is provided, register patient User account & send registration OTP email
+    email_clean = (payload.email or "").strip().lower()
     otp_generated = None
+
     if email_clean:
-        existing_u = db.query(User).filter(User.email == email_clean).first()
-        if not existing_u:
-            new_u = User(
+        existing_user = db.query(User).filter(User.email.ilike(email_clean)).first()
+        if not existing_user:
+            new_user = User(
                 id=new_id,
                 email=email_clean,
                 full_name=payload.name.strip(),
                 role="PATIENT",
                 phone_number=payload.phone.strip(),
                 avatar_initials=initials,
-                is_profile_completed=True,
                 is_active=True
             )
-            db.add(new_u)
+            db.add(new_user)
+        else:
+            existing_user.full_name = payload.name.strip()
+            existing_user.phone_number = payload.phone.strip()
 
-        # Invalidate previous unused OTPs and generate new registration OTP
-        db.query(OTPVerification).filter(
-            OTPVerification.email == email_clean,
-            OTPVerification.is_used == False
-        ).update({"is_used": True})
-
-        otp_generated = str(secrets.randbelow(900000) + 100000)
+        otp_generated = f"{secrets.randbelow(900000) + 100000}"
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+
         otp_record = OTPVerification(
             email=email_clean,
             otp_code=otp_generated,
@@ -883,12 +1003,12 @@ def create_patient(payload: PatientCreateSchema, db: Session = Depends(get_db)):
             is_used=False
         )
         db.add(otp_record)
+        db.commit()
 
         try:
             send_otp_email(to_email=email_clean, otp_code=otp_generated, role="PATIENT", purpose="REGISTRATION")
-            logger.info(f"Sent registration OTP email to {email_clean} for patient {payload.name.strip()}")
         except Exception as e:
-            logger.warning(f"Failed sending registration OTP email to {email_clean}: {e}")
+            logger.warning(f"Failed sending registration OTP email: {e}")
 
     if payload.assigned_doctor_id and payload.assigned_time_slot:
         slot = db.query(DoctorSlotModel).filter(
@@ -903,15 +1023,15 @@ def create_patient(payload: PatientCreateSchema, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_patient)
 
-    msg = f"Patient '{new_patient.name}' ({new_patient.id}) registered successfully."
-    if email_clean and otp_generated:
-        msg += f" Verification OTP sent to {email_clean}."
+    session_count = db.query(PatientConsultationSession).filter(
+        PatientConsultationSession.patient_id == new_patient.id
+    ).count()
 
     return {
         "success": True,
-        "message": msg,
+        "message": f"Patient '{new_patient.name}' registered successfully.",
         "otpSent": bool(email_clean),
-        "data": format_patient_dict(new_patient, session_count=0)
+        "data": format_patient_dict(new_patient, session_count=session_count)
     }
 
 
@@ -1035,6 +1155,284 @@ def list_doctors_with_slots(db: Session = Depends(get_db)):
         "success": True,
         "count": len(doctors),
         "data": doctors
+    }
+
+
+@router.post("/doctors")
+def register_new_doctor(payload: DoctorCreateSchema, db: Session = Depends(get_db)):
+    """
+    Register a new upcoming or attending doctor into the hospital roster with auto-generated timing slots.
+    """
+    ensure_initial_seed_data(db)
+
+    clean_name = payload.name.strip()
+    formatted_name = clean_name if (clean_name.lower().startswith("dr.") or clean_name.lower().startswith("dr ")) else f"Dr. {clean_name}"
+    initials = "".join([part[0] for part in formatted_name.replace("Dr.", "").strip().split() if part])[:2].upper() or "DR"
+    
+    # Generate doctor ID
+    doc_id = f"DOC-{uuid.uuid4().int % 900 + 100}"
+    email_clean = payload.email.strip().lower()
+
+    # Add to DEFAULT_DOCTORS in-memory list
+    new_doc_dict: Dict[str, Any] = {
+        "id": doc_id,
+        "name": formatted_name,
+        "initials": initials,
+        "specialty": payload.specialty.strip(),
+        "department": payload.department.strip(),
+        "email": email_clean,
+        "phone": payload.phone or "+1 (555) 000-0000",
+        "room": payload.room or "Suite 101",
+        "experience": payload.experience or ("New Upcoming Specialist" if payload.is_new_upcoming else "Attending Specialist"),
+        "qualification": payload.qualification or "MD, MBBS",
+        "isNewUpcoming": bool(payload.is_new_upcoming),
+        "shiftTiming": payload.shift_timing or "09:00 AM - 05:00 PM",
+        "available": payload.duty_status == "On duty",
+        "dutyStatus": payload.duty_status or "On duty",
+    }
+    DEFAULT_DOCTORS.insert(0, new_doc_dict)
+
+    # Check or create User table record for login
+    existing_user = db.query(User).filter(User.email.ilike(email_clean)).first()
+    if not existing_user:
+        new_user = User(
+            id=doc_id,
+            email=email_clean,
+            full_name=formatted_name,
+            role="DOCTOR",
+            department=payload.department.strip(),
+            specialization=payload.specialty.strip(),
+            phone_number=payload.phone or "+1 (555) 000-0000",
+            avatar_initials=initials,
+            is_active=True
+        )
+        db.add(new_user)
+        db.commit()
+
+    # Generate standard slots for the new doctor
+    slot_duration = payload.slot_duration or "30 min"
+    standard_times = ["09:00 AM", "09:45 AM", "10:30 AM", "11:15 AM", "02:00 PM", "02:45 PM", "03:30 PM", "04:15 PM"]
+    new_slots = []
+    for idx, time_str in enumerate(standard_times):
+        slot_obj = DoctorSlotModel(
+            id=f"{doc_id}-s{idx+1}",
+            doctor_id=doc_id,
+            doctor_name=formatted_name,
+            time_slot=time_str,
+            duration=slot_duration,
+            status="AVAILABLE"
+        )
+        new_slots.append(slot_obj)
+    db.add_all(new_slots)
+    db.commit()
+
+    slot_items = [
+        {
+            "id": s.id,
+            "time": s.time_slot,
+            "duration": s.duration,
+            "status": s.status,
+            "bookedPatientId": s.booked_patient_id,
+            "bookedPatientName": s.booked_patient_name,
+        }
+        for s in new_slots
+    ]
+
+    new_doc_dict["slots"] = slot_items
+    new_doc_dict["queueCount"] = 0
+
+    return {
+        "success": True,
+        "message": f"Doctor {formatted_name} registered successfully with {len(new_slots)} consultation slots.",
+        "data": new_doc_dict
+    }
+
+
+@router.put("/doctors/{doctor_id}")
+def update_doctor(doctor_id: str, payload: DoctorUpdateSchema, db: Session = Depends(get_db)):
+    """
+    Update doctor details, room, shift timings, duty status, and specialization.
+    """
+    clean_id = doctor_id.strip().lower()
+    
+    # Update in DEFAULT_DOCTORS
+    matched_doc = None
+    for doc in DEFAULT_DOCTORS:
+        if doc["id"].lower() == clean_id:
+            matched_doc = doc
+            break
+
+    if matched_doc:
+        if payload.name is not None and payload.name.strip():
+            matched_doc["name"] = payload.name.strip()
+            matched_doc["initials"] = "".join([p[0] for p in matched_doc["name"].replace("Dr.", "").strip().split() if p])[:2].upper() or "DR"
+        if payload.specialty is not None:
+            matched_doc["specialty"] = payload.specialty.strip()
+        if payload.department is not None:
+            matched_doc["department"] = payload.department.strip()
+        if payload.phone is not None:
+            matched_doc["phone"] = payload.phone.strip()
+        if payload.room is not None:
+            matched_doc["room"] = payload.room.strip()
+        if payload.experience is not None:
+            matched_doc["experience"] = payload.experience.strip()
+        if payload.qualification is not None:
+            matched_doc["qualification"] = payload.qualification.strip()
+        if payload.is_new_upcoming is not None:
+            matched_doc["isNewUpcoming"] = payload.is_new_upcoming
+        if payload.duty_status is not None:
+            matched_doc["dutyStatus"] = payload.duty_status
+            matched_doc["available"] = (payload.duty_status == "On duty")
+        if payload.available is not None:
+            matched_doc["available"] = payload.available
+            matched_doc["dutyStatus"] = "On duty" if payload.available else "Off duty"
+        if payload.shift_timing is not None:
+            matched_doc["shiftTiming"] = payload.shift_timing.strip()
+
+    # Also update in User table if present
+    u = db.query(User).filter(User.id.ilike(clean_id)).first()
+    if u:
+        if payload.name is not None and payload.name.strip():
+            u.full_name = payload.name.strip()
+        if payload.department is not None:
+            u.department = payload.department.strip()
+        if payload.specialty is not None:
+            u.specialization = payload.specialty.strip()
+        if payload.phone is not None:
+            u.phone_number = payload.phone.strip()
+        db.commit()
+
+    # Re-fetch doctor profile
+    all_docs = get_all_doctors_from_db(db)
+    updated_doc = next((d for d in all_docs if d["id"].lower() == clean_id), matched_doc)
+
+    return {
+        "success": True,
+        "message": f"Doctor {doctor_id} updated successfully.",
+        "data": updated_doc
+    }
+
+
+@router.post("/doctors/{doctor_id}/toggle-duty")
+def toggle_doctor_duty(doctor_id: str, db: Session = Depends(get_db)):
+    """
+    Toggle doctor availability and duty status between 'On duty' and 'Off duty'.
+    """
+    clean_id = doctor_id.strip().lower()
+    new_status = "On duty"
+    new_avail = True
+
+    for doc in DEFAULT_DOCTORS:
+        if doc["id"].lower() == clean_id:
+            if doc.get("dutyStatus") == "On duty":
+                doc["dutyStatus"] = "Off duty"
+                doc["available"] = False
+            else:
+                doc["dutyStatus"] = "On duty"
+                doc["available"] = True
+            new_status = doc["dutyStatus"]
+            new_avail = doc["available"]
+            break
+
+    return {
+        "success": True,
+        "doctorId": doctor_id,
+        "dutyStatus": new_status,
+        "available": new_avail,
+        "message": f"Duty status updated to '{new_status}'."
+    }
+
+
+@router.post("/doctors/{doctor_id}/slots")
+def add_doctor_slot(doctor_id: str, payload: DoctorSlotCreateSchema, db: Session = Depends(get_db)):
+    """
+    Add a new custom timing slot for a clinician.
+    """
+    ensure_initial_seed_data(db)
+    all_docs = get_all_doctors_from_db(db)
+    doc = next((d for d in all_docs if d["id"].lower() == doctor_id.lower()), None)
+    doc_name = doc["name"] if doc else f"Doctor {doctor_id}"
+
+    slot_id = f"{doctor_id}-{payload.time_slot.replace(' ', '').replace(':', '')}"
+    
+    # Check if already exists
+    existing = db.query(DoctorSlotModel).filter(DoctorSlotModel.id == slot_id).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Slot at {payload.time_slot} already exists for this doctor.")
+
+    new_slot = DoctorSlotModel(
+        id=slot_id,
+        doctor_id=doctor_id,
+        doctor_name=doc_name,
+        time_slot=payload.time_slot,
+        duration=payload.duration or "30 min",
+        status=payload.status or "AVAILABLE"
+    )
+    db.add(new_slot)
+    db.commit()
+    db.refresh(new_slot)
+
+    return {
+        "success": True,
+        "message": f"Timing slot {payload.time_slot} added successfully.",
+        "data": {
+            "id": new_slot.id,
+            "time": new_slot.time_slot,
+            "duration": new_slot.duration,
+            "status": new_slot.status
+        }
+    }
+
+
+@router.delete("/doctors/{doctor_id}/slots/{slot_id}")
+def delete_doctor_slot(doctor_id: str, slot_id: str, db: Session = Depends(get_db)):
+    """
+    Remove a timing slot for a clinician.
+    """
+    slot = db.query(DoctorSlotModel).filter(
+        and_(
+            DoctorSlotModel.doctor_id == doctor_id,
+            DoctorSlotModel.id == slot_id
+        )
+    ).first()
+
+    if not slot:
+        raise HTTPException(status_code=404, detail=f"Slot '{slot_id}' not found for doctor '{doctor_id}'.")
+
+    if slot.status == "BOOKED":
+        raise HTTPException(status_code=400, detail=f"Cannot delete slot '{slot.time_slot}' because it is booked by {slot.booked_patient_name}. Reassign patient first.")
+
+    db.delete(slot)
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Slot '{slot_id}' deleted successfully."
+    }
+
+
+@router.delete("/doctors/{doctor_id}")
+def delete_doctor(doctor_id: str, db: Session = Depends(get_db)):
+    """
+    Delete or archive a doctor profile from roster.
+    """
+    clean_id = doctor_id.strip().lower()
+    global DEFAULT_DOCTORS
+    DEFAULT_DOCTORS = [d for d in DEFAULT_DOCTORS if d["id"].lower() != clean_id]
+
+    # Delete slots
+    db.query(DoctorSlotModel).filter(DoctorSlotModel.doctor_id == doctor_id).delete()
+    
+    # Delete user if exists
+    u = db.query(User).filter(User.id == doctor_id).first()
+    if u:
+        db.delete(u)
+
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Doctor '{doctor_id}' removed from hospital roster."
     }
 
 
@@ -1637,16 +2035,19 @@ def get_patient_portal_summary(
 
     patient = None
     if u:
-        patient = db.query(PatientModel).filter(
-            or_(
-                PatientModel.email.ilike(u.email) if u.email else False,
-                PatientModel.phone == u.phone_number if u.phone_number else False,
-                PatientModel.name.ilike(u.full_name) if u.full_name else False,
-                PatientModel.id == u.id,
-                PatientModel.pid == u.id,
-                PatientModel.id == f"#{u.id}"
-            )
-        ).first()
+        match_conditions = [
+            PatientModel.id == u.id,
+            PatientModel.pid == u.id,
+            PatientModel.id == f"#{u.id}"
+        ]
+        if u.email:
+            match_conditions.append(PatientModel.email.ilike(u.email))
+        if u.phone_number:
+            match_conditions.append(PatientModel.phone == u.phone_number)
+        if u.full_name:
+            match_conditions.append(PatientModel.name.ilike(u.full_name))
+
+        patient = db.query(PatientModel).filter(or_(*match_conditions)).first()
 
     if not patient:
         patient = db.query(PatientModel).filter(
@@ -1712,20 +2113,24 @@ def get_patient_portal_summary(
     if clean_target not in search_ids:
         search_ids.extend([clean_target, f"#{clean_target}", clean_target.replace('#', '')])
     
+    session_conditions = [
+        PatientConsultationSession.patient_id.in_(search_ids)
+    ]
+    if patient.name:
+        session_conditions.append(PatientConsultationSession.patient_name.ilike(patient.name))
+    if u and u.full_name:
+        session_conditions.append(PatientConsultationSession.patient_name.ilike(u.full_name))
+
     all_sessions = db.query(PatientConsultationSession).filter(
-        or_(
-            PatientConsultationSession.patient_id.in_(search_ids),
-            PatientConsultationSession.patient_name.ilike(patient.name) if patient.name else False,
-            PatientConsultationSession.patient_name.ilike(u.full_name) if (u and u.full_name) else False
-        )
+        or_(*session_conditions)
     ).order_by(PatientConsultationSession.session_number.desc(), PatientConsultationSession.created_at.desc()).all()
 
     # If no patient-specific sessions found, check if there's any recent session shared
     shared_sessions = [s for s in all_sessions if s.is_shared_with_patient]
 
     # Effective attending doctor
-    effective_doc_name = patient.assigned_doctor_name or "Dr. Ankit Kumar"
-    effective_doc_id = patient.assigned_doctor_id or "DOC-001"
+    effective_doc_name = str(patient.assigned_doctor_name or "Dr. Ankit Kumar")
+    effective_doc_id = str(patient.assigned_doctor_id or "DOC-001")
 
     # Base profile
     profile = {
@@ -1755,7 +2160,7 @@ def get_patient_portal_summary(
     }
     if patient.vitals_json:
         try:
-            v_dict = json.loads(patient.vitals_json)
+            v_dict = json.loads(str(patient.vitals_json))
             parsed_vitals["bp"] = v_dict.get("bp", parsed_vitals["bp"])
             parsed_vitals["hr"] = v_dict.get("hr", parsed_vitals["hr"])
             parsed_vitals["pain"] = v_dict.get("pain", "0/10")
@@ -1771,14 +2176,14 @@ def get_patient_portal_summary(
         s_soap = {}
         if session.soap_report_json:
             try:
-                s_soap = json.loads(session.soap_report_json)
+                s_soap = json.loads(str(session.soap_report_json))
             except Exception:
                 s_soap = {}
 
         conv_list = []
         if session.conversation_json:
             try:
-                conv_list = json.loads(session.conversation_json)
+                conv_list = json.loads(str(session.conversation_json))
             except Exception:
                 conv_list = []
 
@@ -1787,8 +2192,8 @@ def get_patient_portal_summary(
                 session.created_at.strftime("%Y-%m-%d") if session.created_at else datetime.now().strftime("%Y-%m-%d")
             )
         )
-        doctor_name = session.doctor_name or effective_doc_name
-        doctor_id = session.doctor_id or effective_doc_id
+        doctor_name = str(session.doctor_name or effective_doc_name)
+        doctor_id = str(session.doctor_id or effective_doc_id)
 
         what_happened = (
             s_soap.get("assessment") or 

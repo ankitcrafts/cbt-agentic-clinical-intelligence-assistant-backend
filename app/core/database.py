@@ -78,6 +78,8 @@ def init_db():
         ("gdrive_web_view_link", "VARCHAR(500)"),
         ("consultation_mode", "VARCHAR(50) DEFAULT 'IN_PERSON'"),
         ("audio_source", "VARCHAR(50) DEFAULT 'MIC'"),
+        ("is_shared_with_patient", "BOOLEAN DEFAULT FALSE"),
+        ("shared_at", "TIMESTAMP WITH TIME ZONE"),
     ]:
         try:
             with engine.begin() as conn:
