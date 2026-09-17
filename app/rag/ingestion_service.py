@@ -8,19 +8,9 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.core.config import GUIDELINES_DIR, VECTORSTORE_DIR
 from app.core.tracing import traceable
+from app.rag.guideline_catalog import metadata_for_filename
 
 FAISS_INDEX_DIR = VECTORSTORE_DIR / "faiss_index"
-
-
-def _guideline_metadata(filename: str) -> dict:
-    lowered = filename.lower()
-    if "ng109" in lowered or "uti" in lowered or "urinary" in lowered:
-        return {"guideline": "NICE NG109", "condition": "lower urinary tract infection"}
-    if "hypertension" in lowered or "blood pressure" in lowered:
-        return {"guideline": "NICE NG136", "condition": "hypertension"}
-    if "diabetes" in lowered:
-        return {"guideline": "NICE NG28", "condition": "type 2 diabetes"}
-    return {"guideline": "clinical guideline", "condition": "general"}
 
 
 class IngestionService:
@@ -39,13 +29,14 @@ class IngestionService:
 
         documents = []
         for pdf_path in pdf_files:
-            meta = _guideline_metadata(pdf_path.name)
+            meta = metadata_for_filename(pdf_path.name)
             loader = PyPDFLoader(str(pdf_path))
             pages = loader.load()
             for page in pages:
                 page.metadata.update(
                     {
                         "source_file": pdf_path.name,
+                        "doc_id": meta["doc_id"],
                         "guideline": meta["guideline"],
                         "condition": meta["condition"],
                     }
@@ -65,6 +56,7 @@ class IngestionService:
             "chunk_count": len(chunks),
             "vectorstore": str(FAISS_INDEX_DIR),
             "files": [path.name for path in pdf_files],
+            "doc_ids": sorted({metadata_for_filename(p.name)["doc_id"] for p in pdf_files}),
         }
 
     def is_indexed(self) -> bool:

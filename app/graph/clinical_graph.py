@@ -82,11 +82,17 @@ class ClinicalGraph:
         }
 
     def _retrieve_guidelines_node(self, state: ClinicalState) -> dict[str, Any]:
-        chunks = self.retrieval.retrieve(state["summary"], state["entities"])
+        retrieval = self.retrieval.retrieve(state["summary"], state["entities"])
+        chunks = retrieval.get("retrieved_chunks", [])
         return sanitize_for_state(
             {
                 "retrieved_chunks": chunks,
                 "rag_context": self.retrieval.format_context(chunks),
+                "retrieval_mode": retrieval.get("retrieval_mode", "global"),
+                "routed_documents": retrieval.get("routed_documents", []),
+                "retrieval_query": retrieval.get("query", ""),
+                "dense_hit_count": retrieval.get("dense_hit_count", 0),
+                "bm25_hit_count": retrieval.get("bm25_hit_count", 0),
             }
         )
 
@@ -182,6 +188,11 @@ class ClinicalGraph:
             "summary": state.get("summary", {}),
             "entities": state.get("entities", {}),
             "retrieved_chunks": state.get("retrieved_chunks", []),
+            "retrieval_mode": state.get("retrieval_mode", ""),
+            "routed_documents": state.get("routed_documents", []),
+            "retrieval_query": state.get("retrieval_query", ""),
+            "dense_hit_count": state.get("dense_hit_count", 0),
+            "bm25_hit_count": state.get("bm25_hit_count", 0),
             "primary_guideline_used": state.get("primary_guideline_used", ""),
             "differential_diagnosis": state.get("differential_diagnosis", []),
             "source_file": state.get("source_file"),
