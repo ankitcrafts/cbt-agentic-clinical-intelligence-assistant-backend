@@ -2,7 +2,7 @@ import json
 import sys
 import traceback
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -11,6 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 
 from app.core.tracing import setup_langsmith_tracing, tracing_status
 
@@ -23,6 +24,17 @@ pipeline = ClinicalPipeline()
 
 AUDIO_PATH = "/Users/durgeshwarpratapsingh/Desktop/ISB_project/app/uploads/WhatsApp Audio 2026-08-13 at 18.50.16.mpeg"
 OUTPUT_DIR = Path("output")
+
+
+class FollowUpRequest(BaseModel):
+    answers: Optional[list[dict[str, Any]]] = Field(
+        default=None,
+        description="List of {question_id, answer}. Preferred for testing without a second audio.",
+    )
+    conversation: Optional[list[dict[str, Any]]] = Field(
+        default=None,
+        description="Optional raw or role-labeled follow-up turns instead of answers.",
+    )
 
 
 @app.on_event("startup")
@@ -43,9 +55,10 @@ def home():
             "2. doctor-patient conversion",
             "3. conversation summary",
             "4. medical entity extraction",
-            "5. guideline retrieval (RAG)",
+            "5. guideline retrieval (RAG hybrid BM25+FAISS)",
             "6. evidence-based differential diagnosis",
-            "7. save analysis report PDF + SOAP note PDF to output/",
+            "7. follow-up questions if confidence < 0.70 (one round)",
+            "8. save analysis report PDF + SOAP note PDF to output/",
         ],
     }
 
@@ -71,10 +84,18 @@ def analyze(
     visit_id: Optional[str] = Query(
         default=None,
         description="Optional visit id. Leave empty to auto-generate one (e.g. visit-a1b2c3d4).",
-    )
+    ),
+    force_follow_up: bool = Query(
+        default=False,
+        description="For testing: always generate follow-up questions even if confidence >= 0.70.",
+    ),
 ):
     try:
-        return pipeline.run_from_audio(AUDIO_PATH, visit_id=visit_id)
+        return pipeline.run_from_audio(
+            AUDIO_PATH,
+            visit_id=visit_id,
+            force_follow_up=force_follow_up,
+        )
     except Exception as e:
         traceback.print_exc()
         return {"status": "error", "message": str(e)}
@@ -85,7 +106,11 @@ def analyze_saved_conversation(
     visit_id: Optional[str] = Query(
         default=None,
         description="Optional visit id. Leave empty to auto-generate one (e.g. visit-a1b2c3d4).",
-    )
+    ),
+    force_follow_up: bool = Query(
+        default=False,
+        description="For testing: always generate follow-up questions even if confidence >= 0.70.",
+    ),
 ):
     try:
         files = sorted(OUTPUT_DIR.glob("*_conversation.json"))
@@ -98,6 +123,7 @@ def analyze_saved_conversation(
             conversation,
             visit_id=visit_id,
             source_file=str(latest),
+            force_follow_up=force_follow_up,
         )
         if tracing_status()["tracing_enabled"]:
             result["langsmith"] = {
@@ -106,6 +132,25 @@ def analyze_saved_conversation(
                 "hint": "Open LangSmith dashboard and filter by visit_id metadata",
             }
         return result
+    except Exception as e:
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/visit/{visit_id}/follow-up")
+def apply_follow_up(visit_id: str, body: FollowUpRequest):
+    """
+    Apply one follow-up round: merge answers into prior summary, re-run entities/RAG/diagnosis/SOAP.
+    No second follow-up is generated even if confidence stays below 0.70.
+    """
+    try:
+        return pipeline.apply_follow_up(
+            visit_id=visit_id,
+            answers=body.answers,
+            conversation=body.conversation,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         traceback.print_exc()
         return {"status": "error", "message": str(e)}

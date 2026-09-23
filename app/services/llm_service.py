@@ -1,6 +1,9 @@
+import time
+
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
+from openai import RateLimitError
 
 from app.core.config import (
     GOOGLE_API_KEY,
@@ -43,10 +46,19 @@ class LLMService:
                 api_key=settings["GROQ_API_KEY"] or None,
             )
 
-    def invoke(self, prompt):
+    def invoke(self, prompt, retries: int = 4, base_delay: float = 8.0):
         if self.llm is None:
             raise RuntimeError(
                 f"LLM provider '{self.provider}' is not configured. "
                 "Check OPENROUTER_API_KEY or GOOGLE_API_KEY in app/.env."
             )
-        return self.llm.invoke(prompt).content
+        last_error = None
+        for attempt in range(retries):
+            try:
+                return self.llm.invoke(prompt).content
+            except RateLimitError as exc:
+                last_error = exc
+                if attempt >= retries - 1:
+                    break
+                time.sleep(base_delay * (2 ** attempt))
+        raise last_error

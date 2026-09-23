@@ -5,6 +5,7 @@ from typing import Any
 
 # One entry per logical clinical document/family.
 # Chunks inherit these fields at ingest time; retrieval routes here first.
+# filename_hints must match PDF names under Rag/data/guidelines/ (order = first match wins).
 GUIDELINE_CATALOG: list[dict[str, Any]] = [
     {
         "doc_id": "nice_ng109_uti",
@@ -56,6 +57,75 @@ GUIDELINE_CATALOG: list[dict[str, Any]] = [
             "polydipsia",
         ],
         "filename_hints": ["diabetes"],
+    },
+    {
+        "doc_id": "nice_ng79_sinusitis",
+        "guideline": "NICE NG79",
+        "condition": "acute sinusitis",
+        "keywords": [
+            "sinusitis",
+            "sinus",
+            "nasal",
+            "facial pain",
+            "facial pressure",
+            "runny nose",
+            "rhinorrhea",
+            "blocked nose",
+            "congestion",
+            "postnasal",
+            "ent",
+        ],
+        # visual-summary-pdf-4656316717.pdf = NG79 sinusitis visual summary
+        "filename_hints": ["4656316717", "sinusitis", "ng79"],
+    },
+    {
+        "doc_id": "nice_ng91_otitis_media",
+        "guideline": "NICE NG91",
+        "condition": "acute otitis media",
+        "keywords": [
+            "otitis",
+            "ear infection",
+            "earache",
+            "ear pain",
+            "otalgia",
+            "middle ear",
+            "ear discharge",
+            "eardrum",
+            "hearing",
+            "ent",
+        ],
+        # otitis-media-*.pdf + visual-summary-pdf-4787282702.pdf
+        "filename_hints": ["otitis", "1837750121413", "4787282702", "ng91"],
+    },
+    {
+        "doc_id": "nice_ng106_heart_failure",
+        "guideline": "NICE NG106",
+        "condition": "chronic heart failure",
+        "keywords": [
+            "heart failure",
+            "cardiac failure",
+            "cardiovascular",
+            "dyspnoea",
+            "dyspnea",
+            "shortness of breath",
+            "breathlessness",
+            "oedema",
+            "edema",
+            "ankle swelling",
+            "orthopnoea",
+            "orthopnea",
+            "ejection fraction",
+            "nt-probnp",
+            "bnp",
+            "hfref",
+            "hfpef",
+        ],
+        "filename_hints": [
+            "heart-failure",
+            "chronic-heart-failure",
+            "6663137725",
+            "ng106",
+        ],
     },
 ]
 

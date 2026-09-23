@@ -20,3 +20,12 @@ class ClinicalState(TypedDict, total=False):
     differential_diagnosis: list[dict[str, Any]]
     visit_id: str
     source_file: str
+    status: str
+    follow_up_iteration: int
+    follow_up_questions: list[dict[str, Any]]
+    previous_summary: dict[str, Any]
+    previous_confidence: float
+    confidence: float
+    confidence_improved: bool
+    follow_up_threshold: float
+    follow_up_note: str
