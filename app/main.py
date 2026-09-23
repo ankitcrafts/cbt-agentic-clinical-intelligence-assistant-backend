@@ -22,8 +22,13 @@ from app.services.pipeline_service import ClinicalPipeline
 app = FastAPI(title="Clinical Intelligence Agent")
 pipeline = ClinicalPipeline()
 
-AUDIO_PATH = "/Users/durgeshwarpratapsingh/Desktop/ISB_project/app/uploads/WhatsApp Audio 2026-08-13 at 18.50.16.mpeg"
-OUTPUT_DIR = Path("output")
+AUDIO_PATH = str(
+    PROJECT_ROOT
+    / "app"
+    / "uploads"
+    / "WhatsApp Audio 2026-08-13 at 18.50.16.mpeg"
+)
+OUTPUT_DIR = PROJECT_ROOT / "output"
 
 
 class FollowUpRequest(BaseModel):
