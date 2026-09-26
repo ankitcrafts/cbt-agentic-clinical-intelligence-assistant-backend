@@ -1,0 +1,66 @@
+# Product Requirements Document (PRD)
+## ClinIQ: Backend Clinical Intelligence & Agentic Engine API
+
+---
+
+## 1. Executive Summary
+The **ClinIQ Backend** is a high-performance, agentic microservice built on FastAPI, LangGraph, ChromaDB, and Deepgram. It serves as the clinical intelligence core for ambient medical consultations, powering real-time medical speech diarization, clinical entity extraction, RAG guideline retrieval over official NICE medical guidelines, multi-hypothesis differential diagnosis ranking, automated SOAP note synthesis, ReportLab PDF clinical report generation, Google Drive archival, Gmail OTP authentication, and doctor-patient appointment scheduling.
+
+---
+
+## 2. Core Capabilities & Backend Objectives
+1. **Medical Audio Processing:** Ingest raw audio files or live streaming chunks, perform speaker diarization (`Doctor` vs `Patient`), and produce timestamped medical transcripts.
+2. **LangGraph Agentic Workflow:** Orchestrate a multi-node clinical state graph that manages visit memory, tracks dialogue turns, extracts clinical entities, queries guideline vectors, and synthesizes differential diagnoses.
+3. **Retrieval-Augmented Decision Support:** Ground clinical diagnoses in vector-indexed National Institute for Health and Care Excellence (NICE) guidelines with semantic retrieval and similarity scores.
+4. **Automated Clinical Documentation:** Synthesize comprehensive SOAP notes (Subjective, Objective, Assessment, Plan) with rich ICD-10 suggestions, red flag alerts, and patient aftercare instructions.
+5. **PDF Report Engine & Cloud Archival:** Generate high-resolution, branded clinical analysis reports and patient SOAP notes via ReportLab, and automatically synchronize them to Google Drive.
+6. **Authentication & Multi-Role Scheduling:** Manage user identities (`ADMIN`, `DOCTOR`, `PATIENT`), 6-digit OTP email delivery via Gmail SMTP, doctor availability calendars, and booking appointment lifecycles.
+
+---
+
+## 3. System Personas & API Consumers
+
+| API Consumer | Functional Needs | Backend Service Endpoints |
+| :--- | :--- | :--- |
+| **Doctor Console Client** | Audio processing, real-time clinical suggestions, live SOAP drafting, final PDF report generation, Google Drive upload. | `/api/process-audio`, `/api/rag-diagnose`, `/api/generate-soap`, `/api/upload-gdrive` |
+| **Patient Portal Client** | Slot discovery, booking creation, OTP authentication, report downloads. | `/api/scheduling/slots`, `/api/scheduling/book`, `/api/auth/send-otp`, `/reports/{file}` |
+| **Admin Dashboard Client** | Doctor management, slot generation, user directory, system observability. | `/api/scheduling/doctors`, `/api/auth/users`, `/observability` |
+
+---
+
+## 4. Functional Requirements
+
+### 4.1 Speech-to-Text & Diarization Engine
+* **FR-BE-1.1:** Support multi-format audio uploads (`audio/wav`, `audio/mp3`, `audio/m4a`, `audio/webm`, `audio/ogg`).
+* **FR-BE-1.2:** Integrate Deepgram Nova-2 Medical STT model with speaker diarization enabled.
+* **FR-BE-1.3:** Map Deepgram speaker channels (`speaker: 0`, `speaker: 1`) to clinical roles (`Doctor`, `Patient`).
+
+### 4.2 LangGraph Agentic Clinical Pipeline
+* **FR-BE-2.1:** Maintain stateful consultation memory across dialogue turns using `ClinicalState` schemas.
+* **FR-BE-2.2:** Clinical Entity Extractor node extracting Chief Complaint, Symptoms, Duration, Severity, Medical History, Medications, and Allergies.
+* **FR-BE-2.3:** Clinical Red Flag Detector alerting for emergency symptoms requiring immediate intervention.
+* **FR-BE-2.4:** Guideline Retrieval Node querying ChromaDB for relevant NICE guidance chunks.
+* **FR-BE-2.5:** Differential Diagnosis Synthesizer producing ranked differential diagnoses with confidence percentages and evidence citations.
+
+### 4.3 Documentation, PDF & Google Drive Services
+* **FR-BE-3.1:** Synthesize complete SOAP notes with explicit Subjective, Objective, Assessment, and Plan fields.
+* **FR-BE-3.2:** Provide `/api/reframe-soap` endpoint allowing clinicians to adjust tone, detail level, or focus of individual SOAP sections.
+* **FR-BE-3.3:** Generate two distinct ReportLab PDF artifacts:
+  * `*_analysis_report.pdf`: Physician diagnostic analysis and NICE guideline evidence.
+  * `*_soap_note.pdf`: Official SOAP note with patient discharge instructions.
+* **FR-BE-3.4:** Upload generated reports to Google Drive via Service Account OAuth2 and return preview/download URLs.
+
+### 4.4 Authentication, Scheduling & Email Services
+* **FR-BE-4.1:** Generate secure 6-digit cryptographic OTPs with 5-minute time-to-live (TTL).
+* **FR-BE-4.2:** Dispatch OTPs and booking confirmations via Gmail SMTP.
+* **FR-BE-4.3:** Issue signed JSON Web Tokens (JWT) containing user ID, email, and role.
+* **FR-BE-4.4:** Doctor schedule configuration with automated 30-minute slot generation, buffer intervals, and double-booking prevention.
+
+---
+
+## 5. Non-Functional Requirements
+
+* **Throughput & Concurrency:** Asynchronous FastAPI endpoint handling using `async`/`await` and non-blocking I/O.
+* **Database Agility:** SQLAlchemy ORM supporting both PostgreSQL (production) and SQLite (local development/testing).
+* **Observability:** Native LangSmith tracing integration for tracking LLM token usage, latency, and LangGraph node transitions.
+* **Resilience:** Fallback mechanisms when external APIs (e.g. Deepgram or OpenRouter) encounter transient rate limits.
