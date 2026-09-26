@@ -161,7 +161,7 @@ DEFAULT_DOCTORS: List[Dict[str, Any]] = [
         "initials": "YT",
         "specialty": "Senior Cardiologist",
         "department": "Cardiology",
-        "email": "yuki.tanaka@stmercy.org",
+        "email": "doctor@cliniq.health",
         "phone": "+1 (555) 201-4401",
         "room": "Suite 204",
         "experience": "Senior Consultant",
@@ -387,7 +387,13 @@ def ensure_initial_seed_data(db: Session):
     """Seed default patients, doctors in User table, and doctor slots if database is freshly created."""
     # Seed default doctors in User table if not present
     for doc in DEFAULT_DOCTORS:
-        existing_u = db.query(User).filter(or_(User.id == doc["id"], User.email == doc["email"])).first()
+        existing_u = db.query(User).filter(
+            or_(
+                User.id == doc["id"],
+                User.email == doc["email"],
+                func.lower(User.full_name) == doc["name"].lower()
+            )
+        ).first()
         if not existing_u:
             new_u = User(
                 id=doc["id"],

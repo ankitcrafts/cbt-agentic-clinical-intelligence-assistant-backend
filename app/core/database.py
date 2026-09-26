@@ -106,12 +106,14 @@ def init_db():
                     designation="System Administrator",
                 ),
                 User(
+                    id="DOC-001",
                     email="doctor@cliniq.health",
                     full_name="Dr. Yuki Tanaka",
                     role="DOCTOR",
                     department="Cardiology",
                     specialization="Senior Cardiologist",
                     designation="Attending Physician",
+                    avatar_initials="YT",
                 ),
                 User(
                     email="patient@cliniq.health",
