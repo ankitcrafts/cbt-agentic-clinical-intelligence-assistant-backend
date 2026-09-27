@@ -36,6 +36,8 @@ gantt
 - [x] **TSK-BE-08:** Integrate Google Drive API via Service Account for automated cloud archival (`app/services/gdrive_service.py`).
 - [x] **TSK-BE-09:** Build appointment scheduling endpoints with doctor slot management and booking validations (`app/api/scheduling.py`).
 - [x] **TSK-BE-10:** Configure LangSmith tracing integration for LLM telemetry and observability (`app/core/tracing.py`).
+- [x] **TSK-BE-11:** Implement Dynamic Condition-Adaptive Clinical Follow-Up Question Extraction in `PipelineService` with LLM schema parsing and fallback generators.
+- [x] **TSK-BE-12:** Multi-Appointment Sequential Session Lifecycle & Flexible Patient ID Lookups: implemented `/api/scheduling/patients/{patient_id}/sessions` and `/api/v1/patients/{patient_id}/sessions` supporting sequential numbering (Session 1 -> Close Consultation -> Session 2 -> Session N+1) and flexible PID format resolution (`#00847261` vs `00847261`).
 
 ### 2.2 Active Sprint Tasks (In Progress)
 - [ ] **TSK-BE-11:** Add Redis-based caching layer for guideline vector query results to reduce repeated ChromaDB lookups.

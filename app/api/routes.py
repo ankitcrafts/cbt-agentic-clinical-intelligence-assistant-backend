@@ -196,39 +196,10 @@ async def upload_recording(
                 if patient_name:
                     existing_for_encounter.patient_name = patient_name
                 session_id = existing_for_encounter.id
-            else:
-                next_session_number = (existing_sessions[0].session_number + 1) if existing_sessions else 1
-                new_session = PatientConsultationSession(
-                    patient_id=clean_pid,
-                    patient_name=patient_name or "Patient",
-                    doctor_id=doctor_id or "DOC-001",
-                    doctor_name=doctor_name or "Dr. Yuki Tanaka",
-                    encounter_id=encounter_id,
-                    session_number=next_session_number,
-                    session_title=f"Session {next_session_number}: Consultation & Review",
-                    appointment_date=datetime.now(timezone.utc),
-                    transcript=transcript,
-                    conversation_json=json.dumps(exchanges),
-                    ai_suggestions_json=json.dumps(ai_suggestions),
-                    clinical_analysis_json=json.dumps(clinical_analysis),
-                    soap_report_json=json.dumps(pipeline_res.get("soap_report") or {}),
-                    audio_file_name=clean_filename,
-                    audio_file_path=str(file_path),
-                    duration_seconds=dur_sec,
-                    consultation_mode=consultation_mode or "IN_PERSON",
-                    audio_source=audio_source or "MIC",
-                    gdrive_file_id=gdrive_file_id,
-                    gdrive_web_view_link=gdrive_web_view_link,
-                    status="COMPLETED",
-                )
-                db.add(new_session)
                 db.commit()
-                db.refresh(new_session)
-                session_id = new_session.id
-            db.commit()
         except Exception as sess_err:
             db.rollback()
-            print(f"[Warning] Failed to save consultation session: {sess_err}")
+            print(f"[Warning] Failed to sync consultation session during recording upload: {sess_err}")
 
 
         return {
@@ -683,10 +654,12 @@ def get_patient_consultation_sessions(patient_id: str, db: Session = Depends(get
     """
     eff_pid = patient_id or "P1245"
     clean_pid = eff_pid if eff_pid.startswith("#") else f"#{eff_pid}"
+    raw_pid = eff_pid.replace("#", "")
     sessions = (
         db.query(PatientConsultationSession)
         .filter(
             (PatientConsultationSession.patient_id == clean_pid) |
+            (PatientConsultationSession.patient_id == raw_pid) |
             (PatientConsultationSession.patient_id == eff_pid)
         )
         .order_by(PatientConsultationSession.session_number.asc())

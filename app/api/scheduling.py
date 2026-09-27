@@ -1672,8 +1672,12 @@ def get_patient_sessions(patient_id: str, db: Session = Depends(get_db)):
     """
     ensure_initial_seed_data(db)
 
+    clean_id = patient_id if patient_id.startswith("#") else f"#{patient_id}"
+    raw_id = patient_id.replace("#", "")
     sessions = db.query(PatientConsultationSession).filter(
-        PatientConsultationSession.patient_id == patient_id
+        (PatientConsultationSession.patient_id == patient_id) |
+        (PatientConsultationSession.patient_id == clean_id) |
+        (PatientConsultationSession.patient_id == raw_id)
     ).order_by(PatientConsultationSession.session_number.asc()).all()
 
     formatted_sessions = []

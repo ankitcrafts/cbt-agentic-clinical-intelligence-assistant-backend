@@ -129,10 +129,11 @@ class ClinicalPipeline:
         if not diff_list or not isinstance(diff_list, list):
             diff_list = self._fallback_differential(summary, entities)
 
-        # Extract or generate guideline medicines & red flags
+        # Extract or generate guideline medicines, red flags & follow-up questions
         guideline_medicines = self._extract_guideline_medicines(entities, diff_list, graph_result.get("retrieved_chunks", []))
         red_flags = self._extract_red_flags(entities, summary)
         confidence_metrics = self._calculate_confidence_metrics(summary, entities, diff_list, graph_result.get("retrieved_chunks", []))
+        follow_up_questions = self._extract_guideline_follow_up_questions(summary, entities, diff_list, graph_result.get("retrieved_chunks", []))
 
         # AI suggestions & SOAP report
         try:
@@ -160,6 +161,8 @@ class ClinicalPipeline:
             "guideline_medicines": guideline_medicines,
             "red_flags": red_flags,
             "confidence_metrics": confidence_metrics,
+            "follow_up_questions": follow_up_questions,
+            "guideline_follow_up_questions": follow_up_questions,
             "retrieved_chunks": graph_result.get("retrieved_chunks", []),
             "primary_guideline_used": graph_result.get("primary_guideline_used", ""),
             "soap_report": soap_report,
@@ -170,6 +173,8 @@ class ClinicalPipeline:
                 "guideline_medicines": guideline_medicines,
                 "red_flags": red_flags,
                 "confidence_metrics": confidence_metrics,
+                "follow_up_questions": follow_up_questions,
+                "guideline_follow_up_questions": follow_up_questions,
                 "soap_report": soap_report,
                 "ai_suggestions": ai_suggestions,
             },
@@ -660,3 +665,143 @@ Differential: {diff_list}
                 }
             ]
         }
+
+    def _extract_guideline_follow_up_questions(self, summary: Any, entities: Any, diff_list: Any, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        try:
+            prompt = f"""
+You are an expert clinical decision support assistant.
+Analyze the following patient clinical presentation, extracted entities, differential diagnoses, and guideline evidence.
+Generate 4-6 specific, high-yield, guideline-based clinical follow-up probing questions that the doctor should ask this specific patient to:
+1. Clarify symptom onset, location, radiation, triggers, and severity.
+2. Rule in or rule out top differential diagnosis conditions.
+3. Check for condition-specific red flags and complications.
+4. Assess medication adherence, lifestyle triggers, or functional impact.
+
+Make sure questions are directly relevant to the actual symptoms and condition described (e.g. respiratory/cough for chest complaints, urinary for UTI, neurological for headaches, metabolic for diabetes).
+Do NOT generate generic headache questions unless the patient actually presents with headaches.
+
+For each question return:
+- question: Exact conversational clinical question for the doctor to ask the patient.
+- priority: "HIGH" (red flags, urgent differentiators), "MEDIUM" (history/triggers/severity), or "LOW" (lifestyle, ergonomics, family history).
+- reason: Clinical rationale explaining how this question clarifies diagnosis or guides NICE protocol.
+- doctor_snippet: Phrasing spoken by the physician.
+- patient_snippet: Realistic answer the patient might provide.
+
+Return ONLY JSON:
+{{
+  "follow_up_questions": [
+    {{
+      "id": "fq-1",
+      "question": "<Clinical question tailored to this patient encounter>",
+      "priority": "HIGH",
+      "reason": "<Clinical justification and guideline rule targeted>",
+      "doctor_snippet": "<Spoken question phrasing by doctor>",
+      "patient_snippet": "<Plausible patient response given the clinical context>"
+    }}
+  ]
+}}
+
+Summary:
+{summary}
+
+Entities:
+{entities}
+
+Differential Diagnoses:
+{diff_list}
+
+Guideline Context Chunks:
+{chunks[:3] if isinstance(chunks, list) else []}
+"""
+            res = parse_llm_json(self.llm.invoke(prompt))
+            if isinstance(res, dict) and "follow_up_questions" in res and isinstance(res["follow_up_questions"], list) and len(res["follow_up_questions"]) > 0:
+                formatted = []
+                for idx, q in enumerate(res["follow_up_questions"]):
+                    if isinstance(q, dict) and q.get("question"):
+                        formatted.append({
+                            "id": q.get("id") or f"fq-{idx + 1}",
+                            "question": q.get("question"),
+                            "priority": str(q.get("priority", "MEDIUM")).upper() if str(q.get("priority", "MEDIUM")).upper() in ["HIGH", "MEDIUM", "LOW"] else "MEDIUM",
+                            "reason": q.get("reason") or "Guideline-directed diagnostic probe",
+                            "doctor_snippet": q.get("doctor_snippet") or q.get("question"),
+                            "patient_snippet": q.get("patient_snippet") or "Patient provided relevant clinical details during consultation."
+                        })
+                if formatted:
+                    return formatted
+        except Exception as e:
+            print(f"[Warning] Failed to generate dynamic LLM follow-up questions: {e}")
+
+        return self._dynamic_fallback_follow_up_questions(summary, entities, diff_list)
+
+    def _dynamic_fallback_follow_up_questions(self, summary: Any, entities: Any, diff_list: Any) -> List[Dict[str, Any]]:
+        """Generates dynamic condition-relevant follow-up questions when LLM is unavailable."""
+        symptoms = []
+        if isinstance(entities, dict):
+            symptoms = entities.get("symptoms") or []
+        elif hasattr(entities, "symptoms"):
+            symptoms = getattr(entities, "symptoms", []) or []
+
+        symptom_str = ", ".join([str(s) for s in symptoms[:3]]) if symptoms else "your current symptoms"
+        top_diff = ""
+        if isinstance(diff_list, list) and len(diff_list) > 0:
+            first = diff_list[0]
+            if isinstance(first, dict):
+                top_diff = first.get("name") or first.get("title") or ""
+            elif hasattr(first, "name"):
+                top_diff = getattr(first, "name", "")
+
+        questions = [
+            {
+                "id": "fq-1",
+                "question": f"When exactly did {symptom_str} first begin, and has the intensity changed progressively or intermittently?",
+                "priority": "HIGH",
+                "reason": "Establishes symptom chronology, onset acuity, and progression trajectory.",
+                "doctor_snippet": f"When did you first notice {symptom_str}, and has it been getting worse?",
+                "patient_snippet": "It started recently and has been persistent over the past few days."
+            },
+            {
+                "id": "fq-2",
+                "question": "Have you experienced any red-flag warning signs such as high fever, sudden sharp pain, shortness of breath, or dizziness?",
+                "priority": "HIGH",
+                "reason": "Screens for acute emergent complications and clinical deterioration red flags.",
+                "doctor_snippet": "Have you noticed any warning signs like high fever, shortness of breath, or dizziness?",
+                "patient_snippet": "No acute shortness of breath or fainting, but the discomfort has been noticeable."
+            },
+            {
+                "id": "fq-3",
+                "question": "What specific activities, foods, or positions seem to trigger or relieve your discomfort?",
+                "priority": "MEDIUM",
+                "reason": "Identifies aggravating and alleviating factors to narrow differential etiology.",
+                "doctor_snippet": "Does anything specific seem to trigger the symptoms or make them feel better?",
+                "patient_snippet": "Rest tends to help slightly, but exertion and fatigue seem to bring it on."
+            },
+            {
+                "id": "fq-4",
+                "question": "Are you currently taking all prescribed medications regularly, or any over-the-counter supplements?",
+                "priority": "MEDIUM",
+                "reason": "Assesses medication compliance, drug interactions, and self-treatment patterns.",
+                "doctor_snippet": "Are you taking your current medications consistently every day?",
+                "patient_snippet": "Yes, I take my prescribed dose every morning as directed."
+            },
+            {
+                "id": "fq-5",
+                "question": "How is this condition impacting your sleep, daily work routine, and stress levels?",
+                "priority": "LOW",
+                "reason": "Assesses functional morbidity, sleep architecture disruption, and lifestyle stressors.",
+                "doctor_snippet": "How has this been affecting your sleep and workday routine?",
+                "patient_snippet": "It disrupts my focus during the day and I have had trouble getting restful sleep."
+            }
+        ]
+
+        if top_diff:
+            questions.append({
+                "id": "fq-6",
+                "question": f"Is there any family history or previous personal episodes of {top_diff}?",
+                "priority": "LOW",
+                "reason": f"Evaluates genetic predisposition and recurrent pattern for {top_diff}.",
+                "doctor_snippet": f"Has anyone in your family had similar issues with {top_diff}?",
+                "patient_snippet": f"No known immediate family history for {top_diff}."
+            })
+
+        return questions
+

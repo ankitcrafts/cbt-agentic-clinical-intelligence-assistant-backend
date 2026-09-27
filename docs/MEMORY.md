@@ -20,6 +20,16 @@
 * **Decision:** Implement pure Python PDF generation via **ReportLab** rather than headless browser HTML-to-PDF rendering (which introduces heavy Chromium binary dependencies).
 * **Consequence:** Fast sub-second PDF generation, zero browser subprocess overhead, and deterministic rendering across all operating systems.
 
+### ADR-BE-04: Dynamic Condition-Adaptive Clinical Probing & Extensible Architecture
+* **Context:** Follow-up questions must dynamically adapt to any clinical presentation (respiratory, cardiovascular, metabolic, acute infectious) rather than static few-shot hardcoding, while providing a pluggable contract for future dedicated subagents or custom graph nodes.
+* **Decision:** Implemented schema-driven contextual extraction in `PipelineService._extract_guideline_follow_up_questions` with priority categorization (`HIGH`, `MEDIUM`, `LOW`), paired physician/patient conversational turns, and entity-informed fallback generators.
+* **Consequence:** The pipeline outputs high-yield clinical questions tailored to the patient encounter and provides a standard schema for future API expansions.
+
+### ADR-BE-05: Multi-Appointment Sequential Session Numbering & Isolation
+* **Context:** A patient consultation must only be finalized as Session 1 when the physician explicitly closes the consultation. When the patient returns for subsequent appointments, the next consultation must automatically be Session 2 (and Session N+1) while preserving prior session records.
+* **Decision:** Dynamically calculate `session_number` as `(existing_completed_sessions_count) + 1`, persist finalized consultation encounters into `patient_consultation_sessions` with complete clinical artifacts (transcripts, SOAP note, CDS analysis, AI suggestions), and clear in-memory live draft upon consultation closure.
+* **Consequence:** Clean chronological progression across all visits for the same patient with full historical review capability in the UI.
+
 ---
 
 ## 2. Environment Variables & Secret Configuration (`.env`)
