@@ -40,12 +40,20 @@ class FollowUpRequest(BaseModel):
         default=None,
         description="Optional raw or role-labeled follow-up turns instead of answers.",
     )
+    evaluate_ragas: bool = Field(
+        default=False,
+        description="If true, run RAGAS validation and include scores in the JSON response.",
+    )
 
 
 @app.on_event("startup")
 def ensure_guideline_index():
     try:
         pipeline.graph.retrieval.ensure_index()
+    except Exception:
+        traceback.print_exc()
+    try:
+        pipeline.ensure_persistence()
     except Exception:
         traceback.print_exc()
 
@@ -55,6 +63,7 @@ def home():
     return {
         "message": "Clinical agent running (LangGraph + RAG + MemorySaver + LangSmith)",
         "observability": tracing_status(),
+        "persistence": pipeline.persistence_status(),
         "steps": [
             "1. conversation transcription",
             "2. doctor-patient conversion",
@@ -64,8 +73,44 @@ def home():
             "6. evidence-based differential diagnosis",
             "7. follow-up questions if confidence < 0.70 (one round)",
             "8. save analysis report PDF + SOAP note PDF to output/",
+            "9. persist visit in Postgres + PDFs in S3 (when configured)",
+            "10. optional RAGAS validation scores (ragas=true)",
         ],
     }
+
+
+@app.get("/persistence")
+def persistence():
+    try:
+        return pipeline.ensure_persistence()
+    except Exception as e:
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/visit/{visit_id}/conversation")
+def visit_conversation(visit_id: str):
+    """Return ordered conversation turns from Postgres (old + follow-up)."""
+    try:
+        state = pipeline.get_visit_state(visit_id)
+        if not state:
+            raise HTTPException(status_code=404, detail=f"No visit found for visit_id={visit_id}")
+        turns = pipeline.visit_store.list_conversation(visit_id)
+        if not turns:
+            turns = state.get("doctor_patient_conversation") or state.get("conversation") or []
+        return {
+            "visit_id": visit_id,
+            "status": state.get("status"),
+            "follow_up_iteration": state.get("follow_up_iteration"),
+            "turns": turns,
+            "postgres_enabled": pipeline.visit_store.enabled,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
 
 
 @app.get("/observability")
@@ -94,12 +139,17 @@ def analyze(
         default=False,
         description="For testing: always generate follow-up questions even if confidence >= 0.70.",
     ),
+    ragas: bool = Query(
+        default=False,
+        description="If true, run RAGAS metrics (faithfulness, answer_relevancy, context_precision).",
+    ),
 ):
     try:
         return pipeline.run_from_audio(
             AUDIO_PATH,
             visit_id=visit_id,
             force_follow_up=force_follow_up,
+            evaluate_ragas=ragas,
         )
     except Exception as e:
         traceback.print_exc()
@@ -116,6 +166,10 @@ def analyze_saved_conversation(
         default=False,
         description="For testing: always generate follow-up questions even if confidence >= 0.70.",
     ),
+    ragas: bool = Query(
+        default=False,
+        description="If true, run RAGAS metrics (faithfulness, answer_relevancy, context_precision).",
+    ),
 ):
     try:
         files = sorted(OUTPUT_DIR.glob("*_conversation.json"))
@@ -129,6 +183,7 @@ def analyze_saved_conversation(
             visit_id=visit_id,
             source_file=str(latest),
             force_follow_up=force_follow_up,
+            evaluate_ragas=ragas,
         )
         if tracing_status()["tracing_enabled"]:
             result["langsmith"] = {
@@ -153,9 +208,22 @@ def apply_follow_up(visit_id: str, body: FollowUpRequest):
             visit_id=visit_id,
             answers=body.answers,
             conversation=body.conversation,
+            evaluate_ragas=body.evaluate_ragas,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/visit/{visit_id}/ragas")
+def evaluate_ragas(visit_id: str):
+    """Run RAGAS validation on an existing visit and return JSON scores."""
+    try:
+        return pipeline.evaluate_visit_ragas(visit_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         traceback.print_exc()
         return {"status": "error", "message": str(e)}

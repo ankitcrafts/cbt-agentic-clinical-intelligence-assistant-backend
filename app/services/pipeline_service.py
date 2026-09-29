@@ -1,5 +1,6 @@
 from typing import Any, Optional
 
+from app.db.visit_store import VisitStore
 from app.graph.clinical_graph import ClinicalGraph
 from app.rag.ingestion_service import IngestionService
 from app.services.followup_service import (
@@ -9,7 +10,9 @@ from app.services.followup_service import (
 )
 from app.services.insights_service import InsightsService
 from app.services.report_service import ReportService
+from app.services.ragas_service import RagasEvaluationService
 from app.services.json_utils import sanitize_for_state
+from app.storage.s3_service import S3Service
 
 
 class ClinicalPipeline:
@@ -25,6 +28,8 @@ class ClinicalPipeline:
     6. Evidence-based differential diagnosis ranking
     7. If confidence < 0.70, attach follow-up questions (one round only)
     8. Build report insights + save analysis PDF and SOAP PDF to output/
+    9. Persist visit (Postgres) + artifacts (S3) when configured
+    10. Optional RAGAS validation scores in JSON
     """
 
     def __init__(self):
@@ -34,19 +39,41 @@ class ClinicalPipeline:
         self.insights = InsightsService()
         self.reports = ReportService()
         self.followup = FollowUpService()
+        self.visit_store = VisitStore()
+        self.s3 = S3Service()
+        self.ragas = RagasEvaluationService()
         self._visits: dict[str, dict[str, Any]] = {}
 
     def ingest_guidelines(self) -> dict[str, Any]:
         return self.ingestion.ingest()
+
+    def persistence_status(self) -> dict[str, Any]:
+        return {
+            "postgres_enabled": self.visit_store.enabled,
+            "s3_enabled": self.s3.enabled,
+            "s3_bucket": self.s3.bucket or None,
+            "memory_visits_cached": len(self._visits),
+        }
+
+    def ensure_persistence(self) -> dict[str, Any]:
+        status = self.persistence_status()
+        if self.visit_store.enabled:
+            status["schema"] = self.visit_store.ensure_schema()
+        return status
 
     def run_from_audio(
         self,
         audio_path: str,
         visit_id: Optional[str] = None,
         force_follow_up: bool = False,
+        evaluate_ragas: bool = False,
     ) -> dict[str, Any]:
         result = self.graph.run_from_audio(audio_path, visit_id=visit_id)
-        return self._finalize_with_reports(result, force_follow_up=force_follow_up)
+        return self._finalize_with_reports(
+            result,
+            force_follow_up=force_follow_up,
+            evaluate_ragas=evaluate_ragas,
+        )
 
     def run_from_conversation(
         self,
@@ -55,6 +82,7 @@ class ClinicalPipeline:
         visit_id: Optional[str] = None,
         source_file: Optional[str] = None,
         force_follow_up: bool = False,
+        evaluate_ragas: bool = False,
     ) -> dict[str, Any]:
         result = self.graph.run_from_conversation(
             conversation=conversation,
@@ -62,11 +90,19 @@ class ClinicalPipeline:
             visit_id=visit_id,
             source_file=source_file,
         )
-        return self._finalize_with_reports(result, force_follow_up=force_follow_up)
+        return self._finalize_with_reports(
+            result,
+            force_follow_up=force_follow_up,
+            evaluate_ragas=evaluate_ragas,
+        )
 
     def get_visit_state(self, visit_id: str) -> Optional[dict[str, Any]]:
         if visit_id in self._visits:
             return self._visits[visit_id]
+        stored = self.visit_store.get_visit(visit_id)
+        if stored:
+            self._visits[visit_id] = stored
+            return stored
         return self.graph.get_visit_state(visit_id)
 
     def apply_follow_up(
@@ -74,6 +110,7 @@ class ClinicalPipeline:
         visit_id: str,
         answers: Optional[list[dict[str, Any]]] = None,
         conversation: Optional[list[dict[str, Any]]] = None,
+        evaluate_ragas: bool = False,
     ) -> dict[str, Any]:
         prior = self.get_visit_state(visit_id)
         if not prior:
@@ -98,7 +135,6 @@ class ClinicalPipeline:
 
         new_turns: list[dict[str, Any]]
         if conversation:
-            # Accept either raw Deepgram turns or role-labeled turns
             if conversation and ("role" in conversation[0] or "speaker" in conversation[0]):
                 if "role" in conversation[0]:
                     new_turns = conversation
@@ -112,7 +148,6 @@ class ClinicalPipeline:
                 prior.get("follow_up_questions") or [],
                 answers,
             )
-            # ensure role fields for downstream services
             for turn in new_turns:
                 if "role" not in turn:
                     turn["role"] = "Doctor" if turn.get("speaker") == "Speaker 1" else "Patient"
@@ -123,6 +158,10 @@ class ClinicalPipeline:
             raise ValueError("Follow-up produced no usable conversation turns.")
 
         old_conversation = list(prior.get("doctor_patient_conversation") or [])
+        for turn in old_conversation:
+            turn.setdefault("round", 0)
+        for turn in new_turns:
+            turn["round"] = 1
         merged_conversation = old_conversation + new_turns
 
         merged_summary = self.followup.merge_summary(previous_summary, new_turns)
@@ -171,19 +210,26 @@ class ClinicalPipeline:
         )
 
         finalized = self._attach_reports(result)
-        self._visits[visit_id] = finalized
+        if evaluate_ragas:
+            finalized = self._attach_ragas(finalized)
+        self._persist_visit(finalized)
         return finalized
 
     def _finalize_with_reports(
         self,
         result: dict[str, Any],
         force_follow_up: bool = False,
+        evaluate_ragas: bool = False,
     ) -> dict[str, Any]:
         diagnoses = result.get("differential_diagnosis") or []
         top_confidence = self.followup.top_confidence(diagnoses)
         result["confidence"] = top_confidence
         result["follow_up_threshold"] = CONFIDENCE_FOLLOW_UP_THRESHOLD
         result["follow_up_iteration"] = int(result.get("follow_up_iteration") or 0)
+
+        for turn in result.get("doctor_patient_conversation") or []:
+            if isinstance(turn, dict):
+                turn.setdefault("round", 0)
 
         if self.followup.needs_follow_up(
             diagnoses,
@@ -210,10 +256,33 @@ class ClinicalPipeline:
             )
 
         finalized = self._attach_reports(result)
-        visit_id = finalized.get("visit_id")
-        if visit_id:
-            self._visits[visit_id] = finalized
+        if evaluate_ragas:
+            finalized = self._attach_ragas(finalized)
+        self._persist_visit(finalized)
         return finalized
+
+    def evaluate_visit_ragas(self, visit_id: str) -> dict[str, Any]:
+        state = self.get_visit_state(visit_id)
+        if not state:
+            raise ValueError(f"No visit found for visit_id={visit_id}")
+        updated = self._attach_ragas(dict(state))
+        self._persist_visit(updated)
+        return {
+            "visit_id": visit_id,
+            "ragas": updated.get("ragas"),
+            "status": updated.get("status"),
+        }
+
+    def _attach_ragas(self, result: dict[str, Any]) -> dict[str, Any]:
+        try:
+            result["ragas"] = sanitize_for_state(self.ragas.evaluate_result(result))
+        except Exception as exc:
+            result["ragas"] = {
+                "evaluated": False,
+                "framework": "ragas",
+                "error": str(exc),
+            }
+        return result
 
     def _attach_reports(self, result: dict[str, Any]) -> dict[str, Any]:
         conversation = (
@@ -232,3 +301,59 @@ class ClinicalPipeline:
         report_info = self.reports.save_reports(result)
         result.update(report_info)
         return result
+
+    def _persist_visit(self, result: dict[str, Any]) -> None:
+        visit_id = result.get("visit_id")
+        if not visit_id:
+            return
+
+        self._visits[visit_id] = result
+
+        try:
+            self.visit_store.save_visit(result)
+        except Exception as exc:
+            result["persistence_error"] = f"postgres: {exc}"
+
+        s3_meta = {}
+        for artifact_type, path_key in (
+            ("analysis_pdf", "report_pdf"),
+            ("soap_pdf", "soap_pdf"),
+        ):
+            local_path = result.get(path_key)
+            if not local_path:
+                continue
+            try:
+                uploaded = self.s3.upload_file(
+                    local_path,
+                    visit_id=visit_id,
+                    artifact_type=artifact_type,
+                )
+                if uploaded.get("uploaded"):
+                    s3_meta[f"{artifact_type}_s3_key"] = uploaded.get("s3_key")
+                    s3_meta[f"{artifact_type}_s3_url"] = uploaded.get("s3_url")
+                    self.visit_store.save_artifact(
+                        visit_id,
+                        artifact_type,
+                        local_path=local_path,
+                        s3_key=uploaded.get("s3_key"),
+                        s3_url=uploaded.get("s3_url"),
+                    )
+                else:
+                    self.visit_store.save_artifact(
+                        visit_id,
+                        artifact_type,
+                        local_path=local_path,
+                    )
+            except Exception as exc:
+                result.setdefault("persistence_error", "")
+                result["persistence_error"] = (
+                    (result.get("persistence_error") or "") + f" s3:{artifact_type}:{exc}"
+                ).strip()
+
+        if s3_meta:
+            result.update(s3_meta)
+            self._visits[visit_id] = result
+            try:
+                self.visit_store.save_visit(result)
+            except Exception:
+                pass

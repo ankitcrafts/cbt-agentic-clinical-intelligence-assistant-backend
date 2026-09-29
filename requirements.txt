@@ -16,3 +16,8 @@ langchain-google-genai
 langchain-groq
 langsmith
 reportlab
+psycopg2-binary
+boto3
+sqlalchemy
+ragas
+nest_asyncio
