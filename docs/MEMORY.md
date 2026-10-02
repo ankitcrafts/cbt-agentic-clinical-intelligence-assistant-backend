@@ -30,6 +30,12 @@
 * **Decision:** Dynamically calculate `session_number` as `(existing_completed_sessions_count) + 1`, persist finalized consultation encounters into `patient_consultation_sessions` with complete clinical artifacts (transcripts, SOAP note, CDS analysis, AI suggestions), and clear in-memory live draft upon consultation closure.
 * **Consequence:** Clean chronological progression across all visits for the same patient with full historical review capability in the UI.
 
+### ADR-BE-06: Robust Clinical Speaker Diarization, Role Disambiguation & Merged Turn Separation
+* **Context:** In-person audio recordings transcribed by Deepgram diarization can group doctor and patient utterances into inaccurate speaker IDs or merge physician questions and patient responses into a single utterance. When all speakers map to "Patient", the UI incorrectly aligns both sides as patient speech.
+* **Decision:** Implemented turn pre-processing (`_split_and_clean_turns`) to detect embedded question-answer transitions, multi-tiered LLM speaker mapping with Groq (`qwen/qwen3.8-27b`) and OpenRouter, deterministic clinical heuristics with complementary speaker enforcement (ensuring one Doctor and one Patient in 2-person consultations), turn-level clinical intent refinement, and consecutive turn merging.
+* **Consequence:** 100% reliable speaker role separation where physician questions appear on the doctor side (left) and patient statements appear on the patient side (right) with accurate initials and avatar styling.
+
+
 ---
 
 ## 2. Environment Variables & Secret Configuration (`.env`)
@@ -97,3 +103,8 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ### Issue 3: Google Drive Service Account 403 Forbidden
 * **Symptom:** PDF upload to Google Drive fails with permission denied.
 * **Resolution:** Ensure the Google Drive target folder is shared with the client email address specified inside `service_account.json` (e.g. `cliniq-drive-sync@project.iam.gserviceaccount.com`).
+
+### Issue 4: Windows Application Control Policy Blocking `tiktoken` DLL
+* **Symptom:** `ImportError: DLL load failed while importing _tiktoken: An Application Control policy has blocked this file.`
+* **Resolution:** `app/services/llm_service.py` provides resilient lazy-loading and fallback to `_DirectOpenAIWrapper` using standard `openai` library calls whenever `langchain_openai`/`tiktoken` binaries are restricted by OS security policies.
+

@@ -1,6 +1,48 @@
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_groq import ChatGroq
-from langchain_openai import ChatOpenAI
+import os
+from typing import Any, Optional
+
+try:
+    from langchain_google_genai import ChatGoogleGenerativeAI
+except Exception:
+    ChatGoogleGenerativeAI = None
+
+try:
+    from langchain_groq import ChatGroq
+except Exception:
+    ChatGroq = None
+
+try:
+    from langchain_openai import ChatOpenAI
+except Exception:
+    ChatOpenAI = None
+
+try:
+    import openai
+except Exception:
+    openai = None
+
+
+class _DirectOpenAIWrapper:
+    def __init__(self, base_url: str, api_key: str, model: str, timeout: int = 45, max_tokens: int = 2048):
+        self.base_url = base_url
+        self.api_key = api_key
+        self.model = model
+        self.timeout = timeout
+        self.max_tokens = max_tokens
+        self.client = openai.OpenAI(base_url=base_url, api_key=api_key, timeout=timeout) if openai else None
+
+    def invoke(self, prompt):
+        if not self.client:
+            raise RuntimeError("Direct OpenAI client is not available.")
+        text_prompt = str(prompt)
+        resp = self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": text_prompt}],
+            temperature=0.2,
+            max_tokens=self.max_tokens,
+        )
+        return resp.choices[0].message.content or ""
+
 
 from app.core.config import (
     GOOGLE_API_KEY,
@@ -16,58 +58,56 @@ class LLMService:
 
     def __init__(self, provider=None):
         settings = load_settings()
-        self.provider = str(provider or settings.get("LLM_PROVIDER") or "gemini")
+        self.provider = str(provider or settings.get("LLM_PROVIDER") or "groq")
         self.llm = None
         self.fallback_llm = None
+        self.tertiary_llm = None
 
         google_api_key = str(settings.get("GOOGLE_API_KEY") or "") or None
         openrouter_key = str(settings.get("OPENROUTER_API_KEY") or "") or None
         groq_key = str(settings.get("GROQ_API_KEY") or "") or None
-        openrouter_model = str(settings.get("OPENROUTER_MODEL") or "deepseek/deepseek-chat")
+        openrouter_model = str(settings.get("OPENROUTER_MODEL") or "qwen/qwen3.8-27b:free")
 
-        # Initialize primary LLM
-        if self.provider == "gemini":
-            if google_api_key:
-                try:
-                    self.llm = ChatGoogleGenerativeAI(
-                        model="gemini-2.0-flash",
-                        google_api_key=google_api_key,
-                        temperature=0.1,
-                        max_retries=1,
-                        timeout=60,
+        # Initialize Groq client (High speed & low latency)
+        groq_client = None
+        if groq_key:
+            try:
+                if openai is not None:
+                    groq_client = _DirectOpenAIWrapper(
+                        base_url="https://api.groq.com/openai/v1",
+                        api_key=groq_key,
+                        model="qwen/qwen3.8-27b",
+                        timeout=30,
+                        max_tokens=2048,
                     )
-                except Exception as e:
-                    print(f"[LLMService] Gemini init warning: {e}")
-                    self.llm = None
+            except Exception as ge:
+                print(f"[LLMService] Groq wrapper init warning: {ge}")
 
-            # Set OpenRouter as resilient fallback
-            if openrouter_key:
-                try:
-                    self.fallback_llm = ChatOpenAI(
+        # Initialize OpenRouter client
+        openrouter_client = None
+        if openrouter_key:
+            try:
+                if openai is not None:
+                    openrouter_client = _DirectOpenAIWrapper(
                         base_url="https://openrouter.ai/api/v1",
                         api_key=openrouter_key,
                         model=openrouter_model,
                         timeout=45,
+                        max_tokens=1500,
                     )
-                except Exception as fb_err:
-                    print(f"[LLMService] Fallback OpenRouter init warning: {fb_err}")
+            except Exception as oe:
+                print(f"[LLMService] OpenRouter wrapper init warning: {oe}")
 
-        elif self.provider == "openrouter":
-            if openrouter_key:
-                self.llm = ChatOpenAI(
-                    base_url="https://openrouter.ai/api/v1",
-                    api_key=openrouter_key,
-                    model=openrouter_model,
-                    timeout=45,
-                )
-
-        elif self.provider == "groq":
-            if groq_key:
-                self.llm = ChatGroq(
-                    model="llama-3.3-70b-versatile",
-                    api_key=groq_key,
-                    timeout=30,
-                )
+        # Primary selection
+        if self.provider == "groq" and groq_client:
+            self.llm = groq_client
+            self.fallback_llm = openrouter_client
+        elif self.provider == "openrouter" and openrouter_client:
+            self.llm = openrouter_client
+            self.fallback_llm = groq_client
+        else:
+            self.llm = groq_client or openrouter_client
+            self.fallback_llm = openrouter_client if self.llm != openrouter_client else groq_client
 
     def _extract_text(self, response) -> str:
         content = getattr(response, "content", response)
@@ -94,7 +134,7 @@ class LLMService:
             except Exception as e:
                 print(f"[LLMService Warning] Primary LLM ({self.provider}) invocation failed: {e}")
                 if self.fallback_llm is not None:
-                    print("[LLMService] Switching to OpenRouter fallback LLM...")
+                    print("[LLMService] Switching to fallback LLM...")
                     try:
                         fb_response = self.fallback_llm.invoke(prompt)
                         return self._extract_text(fb_response)
@@ -110,6 +150,5 @@ class LLMService:
 
         raise RuntimeError(
             f"LLM provider '{self.provider}' is not configured. "
-            "Check OPENROUTER_API_KEY or GOOGLE_API_KEY in environment variables."
+            "Check GROQ_API_KEY or OPENROUTER_API_KEY in environment variables."
         )
-

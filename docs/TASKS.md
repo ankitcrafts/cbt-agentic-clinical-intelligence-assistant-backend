@@ -38,11 +38,13 @@ gantt
 - [x] **TSK-BE-10:** Configure LangSmith tracing integration for LLM telemetry and observability (`app/core/tracing.py`).
 - [x] **TSK-BE-11:** Implement Dynamic Condition-Adaptive Clinical Follow-Up Question Extraction in `PipelineService` with LLM schema parsing and fallback generators.
 - [x] **TSK-BE-12:** Multi-Appointment Sequential Session Lifecycle & Flexible Patient ID Lookups: implemented `/api/scheduling/patients/{patient_id}/sessions` and `/api/v1/patients/{patient_id}/sessions` supporting sequential numbering (Session 1 -> Close Consultation -> Session 2 -> Session N+1) and flexible PID format resolution (`#00847261` vs `00847261`).
+- [x] **TSK-BE-13:** Clinical Speaker Diarization & Role Disambiguation: Enhanced `ConversationService` with split-turn extraction, complementary physician-patient role enforcement, turn-by-turn intent refinement, and consecutive utterance merging.
 
 ### 2.2 Active Sprint Tasks (In Progress)
-- [ ] **TSK-BE-11:** Add Redis-based caching layer for guideline vector query results to reduce repeated ChromaDB lookups.
-- [ ] **TSK-BE-12:** Optimize ReportLab canvas styling to include hospital logo branding and QR codes linking to patient portal summaries.
-- [ ] **TSK-BE-13:** Enhance prompt safety filters to prevent prompt injection from malicious patient transcripts.
+- [ ] **TSK-BE-14:** Add Redis-based caching layer for guideline vector query results to reduce repeated ChromaDB lookups.
+- [ ] **TSK-BE-15:** Optimize ReportLab canvas styling to include hospital logo branding and QR codes linking to patient portal summaries.
+- [ ] **TSK-BE-16:** Enhance prompt safety filters to prevent prompt injection from malicious patient transcripts.
+
 
 ### 2.3 Future Roadmap (Backlog)
 - [ ] **TSK-BE-14:** Implement live WebSocket streaming endpoint (`/ws/audio`) for sub-second audio transcription streaming.
