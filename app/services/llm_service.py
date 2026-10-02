@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Any, Optional
 
 try:
@@ -18,8 +19,10 @@ except Exception:
 
 try:
     import openai
+    from openai import RateLimitError
 except Exception:
     openai = None
+    RateLimitError = Exception
 
 
 class _DirectOpenAIWrapper:
@@ -58,58 +61,80 @@ class LLMService:
 
     def __init__(self, provider=None):
         settings = load_settings()
-        self.provider = str(provider or settings.get("LLM_PROVIDER") or "groq")
+        self.provider = str(provider or settings.get("LLM_PROVIDER") or "openrouter")
         self.llm = None
         self.fallback_llm = None
-        self.tertiary_llm = None
 
         google_api_key = str(settings.get("GOOGLE_API_KEY") or "") or None
         openrouter_key = str(settings.get("OPENROUTER_API_KEY") or "") or None
         groq_key = str(settings.get("GROQ_API_KEY") or "") or None
-        openrouter_model = str(settings.get("OPENROUTER_MODEL") or "qwen/qwen3.8-27b:free")
+        openrouter_model = str(settings.get("OPENROUTER_MODEL") or "deepseek/deepseek-chat")
 
-        # Initialize Groq client (High speed & low latency)
-        groq_client = None
-        if groq_key:
+        # 1. Gemini
+        gemini_client = None
+        if google_api_key and ChatGoogleGenerativeAI:
             try:
-                if openai is not None:
-                    groq_client = _DirectOpenAIWrapper(
-                        base_url="https://api.groq.com/openai/v1",
-                        api_key=groq_key,
-                        model="qwen/qwen3.8-27b",
-                        timeout=30,
-                        max_tokens=2048,
-                    )
+                gemini_client = ChatGoogleGenerativeAI(
+                    model="gemini-1.5-flash",
+                    google_api_key=google_api_key,
+                    temperature=0.2,
+                )
             except Exception as ge:
-                print(f"[LLMService] Groq wrapper init warning: {ge}")
+                print(f"[LLMService] Gemini init warning: {ge}")
 
-        # Initialize OpenRouter client
+        # 2. OpenRouter
         openrouter_client = None
         if openrouter_key:
-            try:
-                if openai is not None:
-                    openrouter_client = _DirectOpenAIWrapper(
+            if ChatOpenAI:
+                try:
+                    openrouter_client = ChatOpenAI(
                         base_url="https://openrouter.ai/api/v1",
                         api_key=openrouter_key,
                         model=openrouter_model,
-                        timeout=45,
-                        max_tokens=1500,
+                        temperature=0.2,
                     )
-            except Exception as oe:
-                print(f"[LLMService] OpenRouter wrapper init warning: {oe}")
+                except Exception as oe:
+                    print(f"[LLMService] OpenRouter ChatOpenAI warning: {oe}")
+            if not openrouter_client and openai:
+                openrouter_client = _DirectOpenAIWrapper(
+                    base_url="https://openrouter.ai/api/v1",
+                    api_key=openrouter_key,
+                    model=openrouter_model,
+                    timeout=45,
+                    max_tokens=2048,
+                )
 
-        # Primary selection
-        if self.provider == "groq" and groq_client:
-            self.llm = groq_client
-            self.fallback_llm = openrouter_client
-        elif self.provider == "openrouter" and openrouter_client:
-            self.llm = openrouter_client
-            self.fallback_llm = groq_client
-        else:
-            self.llm = groq_client or openrouter_client
-            self.fallback_llm = openrouter_client if self.llm != openrouter_client else groq_client
+        # 3. Groq
+        groq_client = None
+        if groq_key:
+            if ChatGroq:
+                try:
+                    groq_client = ChatGroq(
+                        model="llama-3.3-70b-versatile",
+                        api_key=groq_key,
+                    )
+                except Exception as gqe:
+                    print(f"[LLMService] ChatGroq warning: {gqe}")
+            if not groq_client and openai:
+                groq_client = _DirectOpenAIWrapper(
+                    base_url="https://api.groq.com/openai/v1",
+                    api_key=groq_key,
+                    model="llama-3.3-70b-versatile",
+                    timeout=30,
+                    max_tokens=2048,
+                )
 
-    def _extract_text(self, response) -> str:
+        if self.provider == "gemini":
+            self.llm = gemini_client or openrouter_client or groq_client
+            self.fallback_llm = openrouter_client or groq_client
+        elif self.provider == "groq":
+            self.llm = groq_client or openrouter_client or gemini_client
+            self.fallback_llm = openrouter_client or gemini_client
+        else:  # openrouter default
+            self.llm = openrouter_client or groq_client or gemini_client
+            self.fallback_llm = groq_client or gemini_client
+
+    def _extract_text(self, response: Any) -> str:
         content = getattr(response, "content", response)
         if isinstance(content, list):
             text_parts = []
@@ -125,30 +150,39 @@ class LLMService:
             return content
         return str(content)
 
-    def invoke(self, prompt) -> str:
-        # Try primary LLM
+    def invoke(self, prompt: Any, retries: int = 3, base_delay: float = 2.0) -> str:
+        if self.llm is None and self.fallback_llm is None:
+            raise RuntimeError(
+                f"LLM provider '{self.provider}' is not configured. "
+                "Check OPENROUTER_API_KEY, GROQ_API_KEY, or GOOGLE_API_KEY in environment variables."
+            )
+
+        last_error = None
+        # Try primary LLM with retries
         if self.llm is not None:
-            try:
-                response = self.llm.invoke(prompt)
-                return self._extract_text(response)
-            except Exception as e:
-                print(f"[LLMService Warning] Primary LLM ({self.provider}) invocation failed: {e}")
-                if self.fallback_llm is not None:
-                    print("[LLMService] Switching to fallback LLM...")
-                    try:
-                        fb_response = self.fallback_llm.invoke(prompt)
-                        return self._extract_text(fb_response)
-                    except Exception as fb_e:
-                        print(f"[LLMService Error] Fallback invocation also failed: {fb_e}")
-                        raise fb_e
-                raise e
+            for attempt in range(retries):
+                try:
+                    response = self.llm.invoke(prompt)
+                    return self._extract_text(response)
+                except RateLimitError as exc:
+                    last_error = exc
+                    if attempt < retries - 1:
+                        time.sleep(base_delay * (2 ** attempt))
+                except Exception as exc:
+                    last_error = exc
+                    print(f"[LLMService Warning] Primary LLM invoke failed: {exc}")
+                    break
 
-        # If primary wasn't initialized but fallback is ready
+        # Try fallback LLM
         if self.fallback_llm is not None:
-            fb_response = self.fallback_llm.invoke(prompt)
-            return self._extract_text(fb_response)
+            print("[LLMService] Attempting fallback LLM invocation...")
+            for attempt in range(retries):
+                try:
+                    fb_response = self.fallback_llm.invoke(prompt)
+                    return self._extract_text(fb_response)
+                except Exception as fb_exc:
+                    last_error = fb_exc
+                    if attempt < retries - 1:
+                        time.sleep(base_delay * (2 ** attempt))
 
-        raise RuntimeError(
-            f"LLM provider '{self.provider}' is not configured. "
-            "Check GROQ_API_KEY or OPENROUTER_API_KEY in environment variables."
-        )
+        raise last_error or RuntimeError("LLM invocation failed across all configured providers.")

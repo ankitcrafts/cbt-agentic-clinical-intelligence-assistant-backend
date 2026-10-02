@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+venv
+__pycache__
+**/__pycache__
+*.py[cod]
+*.egg-info
+.DS_Store
+.env
+**/.env
+*.md
+requirements copy.txt
+output/Deployment_*.pdf
+output/*_analysis_report.pdf
+output/*_soap_note.pdf

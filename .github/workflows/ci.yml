@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "durgeshar/backend2"]
+  pull_request:
+    branches: [main, "durgeshar/backend2"]
+
+jobs:
+  python-checks:
+    name: Python compile + unit smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # CI smoke does not load embeddings; install core libs only for faster checks.
+          pip install \
+            fastapi uvicorn pydantic python-dotenv \
+            langchain langchain-community langchain-openai \
+            langchain-google-genai langchain-groq langgraph langsmith \
+            reportlab pypdf
+
+      - name: Run CI checks
+        run: python scripts/ci_check.py
+
+  docker-build:
+    name: Docker build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: python-checks
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: clinical-intelligence-backend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -39,11 +39,16 @@ gantt
 - [x] **TSK-BE-11:** Implement Dynamic Condition-Adaptive Clinical Follow-Up Question Extraction in `PipelineService` with LLM schema parsing and fallback generators.
 - [x] **TSK-BE-12:** Multi-Appointment Sequential Session Lifecycle & Flexible Patient ID Lookups: implemented `/api/scheduling/patients/{patient_id}/sessions` and `/api/v1/patients/{patient_id}/sessions` supporting sequential numbering (Session 1 -> Close Consultation -> Session 2 -> Session N+1) and flexible PID format resolution (`#00847261` vs `00847261`).
 - [x] **TSK-BE-13:** Clinical Speaker Diarization & Role Disambiguation: Enhanced `ConversationService` with split-turn extraction, complementary physician-patient role enforcement, turn-by-turn intent refinement, and consecutive utterance merging.
+- [x] **TSK-BE-14:** Document-routed Hybrid RAG: Implemented BM25 sparse + FAISS dense retrieval with Reciprocal Rank Fusion (RRF) over expanded NICE guideline catalog (`app/rag/bm25.py`, `app/rag/guideline_catalog.py`, `app/rag/retrieval_service.py`).
+- [x] **TSK-BE-15:** Confidence-Based Follow-up Loop: Added one-round follow-up workflow (`app/services/followup_service.py`, `POST /visit/{visit_id}/follow-up`) triggered when diagnosis confidence < 0.70.
+- [x] **TSK-BE-16:** Institutional Visit Persistence & S3 Cloud Storage: Implemented PostgreSQL schema `cliniIQ` persistence via SQLAlchemy (`app/db/visit_store.py`) and S3 PDF uploads (`app/storage/s3_service.py`).
+- [x] **TSK-BE-17:** RAGAS Validation Framework: Added quantitative RAG quality benchmarking (`app/services/ragas_service.py`, `POST /visit/{visit_id}/ragas`).
+- [x] **TSK-BE-18:** DevOps, Containerization & CI/CD: Added multi-stage `Dockerfile`, `docker-compose.yml`, smoke test scripts, and GitHub Actions CI / ECR deploy workflows.
 
 ### 2.2 Active Sprint Tasks (In Progress)
-- [ ] **TSK-BE-14:** Add Redis-based caching layer for guideline vector query results to reduce repeated ChromaDB lookups.
-- [ ] **TSK-BE-15:** Optimize ReportLab canvas styling to include hospital logo branding and QR codes linking to patient portal summaries.
-- [ ] **TSK-BE-16:** Enhance prompt safety filters to prevent prompt injection from malicious patient transcripts.
+- [ ] **TSK-BE-19:** Add Redis-based caching layer for guideline vector query results to reduce repeated retrieval lookups.
+- [ ] **TSK-BE-20:** Optimize ReportLab canvas styling to include hospital logo branding and QR codes linking to patient portal summaries.
+- [ ] **TSK-BE-21:** Enhance prompt safety filters to prevent prompt injection from malicious patient transcripts.
 
 
 ### 2.3 Future Roadmap (Backlog)

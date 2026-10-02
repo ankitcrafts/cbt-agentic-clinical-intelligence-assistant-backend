@@ -21,4 +21,6 @@ pypdf
 sentence-transformers
 faiss-cpu
 reportlab
-
+boto3
+ragas
+nest_asyncio

@@ -35,6 +35,16 @@
 * **Decision:** Implemented turn pre-processing (`_split_and_clean_turns`) to detect embedded question-answer transitions, multi-tiered LLM speaker mapping with Groq (`qwen/qwen3.8-27b`) and OpenRouter, deterministic clinical heuristics with complementary speaker enforcement (ensuring one Doctor and one Patient in 2-person consultations), turn-level clinical intent refinement, and consecutive turn merging.
 * **Consequence:** 100% reliable speaker role separation where physician questions appear on the doctor side (left) and patient statements appear on the patient side (right) with accurate initials and avatar styling.
 
+### ADR-BE-07: Document-Routed Hybrid RAG (BM25 + FAISS Dense with Reciprocal Rank Fusion)
+* **Context:** Pure dense vector search can retrieve irrelevant guideline chunks or miss exact clinical keyword matches (e.g. specific drug dosages or diagnostic criteria).
+* **Decision:** Route clinical queries to targeted NICE guideline catalogs first, perform dense similarity search (FAISS) and sparse keyword search (BM25) over the filtered document chunks, and fuse ranked lists using Reciprocal Rank Fusion (RRF).
+* **Consequence:** Higher retrieval accuracy, improved context precision for diagnosis, and reduced LLM hallucination risk.
+
+### ADR-BE-08: Persistent Visit Store, S3 Cloud Artifacts & RAGAS Quality Evaluation
+* **Context:** Encounters, conversations, and generated PDFs must be preserved long-term in PostgreSQL and AWS S3, with automated validation of RAG generation quality.
+* **Decision:** Implement `VisitStore` (SQLAlchemy/PostgreSQL schema `cliniIQ`) for visit metadata and conversation history, `S3Service` for clinical report artifact storage, and `RagasEvaluationService` for automated faithfulness, answer relevancy, and context precision scoring.
+* **Consequence:** Complete institutional persistence and quantitative RAG pipeline benchmarking.
+
 
 ---
 

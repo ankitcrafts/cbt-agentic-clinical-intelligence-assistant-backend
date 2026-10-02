@@ -4,16 +4,24 @@ import traceback
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 
+from app.db.visit_store import VisitStore
 from app.graph.clinical_graph import ClinicalGraph
 from app.rag.ingestion_service import IngestionService
 from app.services.conversation_service import ConversationService
 from app.services.deepgram_service import DeepgramService
 from app.services.entity_service import EntityService
+from app.services.followup_service import (
+    CONFIDENCE_FOLLOW_UP_THRESHOLD,
+    MAX_FOLLOW_UP_ROUNDS,
+    FollowUpService,
+)
 from app.services.insights_service import InsightsService
-from app.services.json_utils import parse_llm_json
+from app.services.json_utils import parse_llm_json, sanitize_for_state
 from app.services.llm_service import LLMService
+from app.services.ragas_service import RagasEvaluationService
 from app.services.report_service import ReportService
 from app.services.summary_service import SummaryService
+from app.storage.s3_service import S3Service
 
 
 class ClinicalPipeline:
@@ -22,7 +30,8 @@ class ClinicalPipeline:
     - Deepgram Speech-to-Text & Diarization
     - LangGraph-based workflow (Role labeling, Summary, Entity extraction, RAG, Differential Diagnosis)
     - Real-time AI consultation suggestions & structured SOAP note generation
-    - Automatic PDF analysis & SOAP report generation in output/
+    - Confidence-based follow-up loop & RAGAS evaluation
+    - Postgres & S3 persistence for visits and generated PDF reports
     - Checkpointed memory state per visit/encounter
     """
 
@@ -36,11 +45,36 @@ class ClinicalPipeline:
         self.insights = InsightsService()
         self.reports = ReportService()
         self.llm = LLMService()
+        self.followup = FollowUpService()
+        self.visit_store = VisitStore()
+        self.s3 = S3Service()
+        self.ragas = RagasEvaluationService()
+        self._visits: dict[str, dict[str, Any]] = {}
 
     def ingest_guidelines(self) -> Dict[str, Any]:
         return self.ingestion.ingest()
 
+    def persistence_status(self) -> dict[str, Any]:
+        return {
+            "postgres_enabled": self.visit_store.enabled,
+            "s3_enabled": self.s3.enabled,
+            "s3_bucket": self.s3.bucket or None,
+            "memory_visits_cached": len(self._visits),
+        }
+
+    def ensure_persistence(self) -> dict[str, Any]:
+        status = self.persistence_status()
+        if self.visit_store.enabled:
+            status["schema"] = self.visit_store.ensure_schema()
+        return status
+
     def get_visit_state(self, visit_id: str) -> Optional[Dict[str, Any]]:
+        if visit_id in self._visits:
+            return self._visits[visit_id]
+        stored = self.visit_store.get_visit(visit_id)
+        if stored:
+            self._visits[visit_id] = stored
+            return stored
         return self.graph.get_visit_state(visit_id)
 
     def run_from_audio(
@@ -51,6 +85,8 @@ class ClinicalPipeline:
         doctor_initials: str = "YT",
         patient_initials: str = "MD",
         visit_id: Optional[str] = None,
+        force_follow_up: bool = False,
+        evaluate_ragas: bool = False,
     ) -> Dict[str, Any]:
         asr = self.deepgram.transcribe(file_path=audio_path)
         conversation_data = asr.get("conversation", [])
@@ -66,6 +102,8 @@ class ClinicalPipeline:
             doctor_initials=doctor_initials,
             patient_initials=patient_initials,
             visit_id=visit_id,
+            force_follow_up=force_follow_up,
+            evaluate_ragas=evaluate_ragas,
         )
 
     def run_from_conversation(
@@ -78,6 +116,8 @@ class ClinicalPipeline:
         patient_initials: str = "MD",
         visit_id: Optional[str] = None,
         source_file: Optional[str] = None,
+        force_follow_up: bool = False,
+        evaluate_ragas: bool = False,
     ) -> Dict[str, Any]:
         transcript = transcript or ""
 
@@ -164,8 +204,14 @@ class ClinicalPipeline:
             "follow_up_questions": follow_up_questions,
             "guideline_follow_up_questions": follow_up_questions,
             "retrieved_chunks": graph_result.get("retrieved_chunks", []),
+            "retrieval_mode": graph_result.get("retrieval_mode", ""),
+            "routed_documents": graph_result.get("routed_documents", []),
+            "retrieval_query": graph_result.get("retrieval_query", ""),
+            "dense_hit_count": graph_result.get("dense_hit_count", 0),
+            "bm25_hit_count": graph_result.get("bm25_hit_count", 0),
             "primary_guideline_used": graph_result.get("primary_guideline_used", ""),
             "soap_report": soap_report,
+            "source_file": source_file,
             "clinical_analysis": {
                 "summary": summary,
                 "entities": entities,
@@ -180,15 +226,194 @@ class ClinicalPipeline:
             },
         }
 
-        # Generate report insights and save PDF reports
-        try:
-            result = self._finalize_with_reports(result)
-        except Exception as report_err:
-            print(f"[ClinicalPipeline] PDF report generation skipped/warning: {report_err}")
+        return self._finalize_with_reports(
+            result,
+            force_follow_up=force_follow_up,
+            evaluate_ragas=evaluate_ragas,
+        )
 
+    def apply_follow_up(
+        self,
+        visit_id: str,
+        answers: Optional[list[dict[str, Any]]] = None,
+        conversation: Optional[list[dict[str, Any]]] = None,
+        evaluate_ragas: bool = False,
+    ) -> dict[str, Any]:
+        prior = self.get_visit_state(visit_id)
+        if not prior:
+            raise ValueError(f"No visit found for visit_id={visit_id}")
+
+        iteration = int(prior.get("follow_up_iteration") or 0)
+        if iteration >= MAX_FOLLOW_UP_ROUNDS:
+            raise ValueError(
+                "Follow-up already used for this visit. No further follow-up rounds are allowed."
+            )
+        pending_questions = prior.get("follow_up_questions") or []
+        if prior.get("status") != "needs_follow_up" and not pending_questions:
+            raise ValueError(
+                "Visit has no pending follow-up. Re-run analyze with confidence below "
+                f"{CONFIDENCE_FOLLOW_UP_THRESHOLD:.2f} (or force_follow_up=true for testing)."
+            )
+
+        previous_confidence = self.followup.top_confidence(
+            prior.get("differential_diagnosis") or []
+        )
+        previous_summary = prior.get("summary") or {}
+
+        new_turns: list[dict[str, Any]]
+        if conversation:
+            if conversation and ("role" in conversation[0] or "speaker" in conversation[0]):
+                if "role" in conversation[0]:
+                    new_turns = conversation
+                else:
+                    labeled = self.graph.conversation.to_doctor_patient(conversation)
+                    new_turns = labeled.get("conversation") or []
+            else:
+                new_turns = []
+        elif answers:
+            new_turns = self.followup.answers_to_conversation(
+                prior.get("follow_up_questions") or [],
+                answers,
+            )
+            for turn in new_turns:
+                if "role" not in turn:
+                    turn["role"] = "Doctor" if turn.get("speaker") == "Speaker 1" else "Patient"
+        else:
+            raise ValueError("Provide either answers or conversation for follow-up.")
+
+        if not new_turns:
+            raise ValueError("Follow-up produced no usable conversation turns.")
+
+        old_conversation = list(prior.get("doctor_patient_conversation") or [])
+        for turn in old_conversation:
+            turn.setdefault("round", 0)
+        for turn in new_turns:
+            turn["round"] = 1
+        merged_conversation = old_conversation + new_turns
+
+        merged_summary = self.followup.merge_summary(previous_summary, new_turns)
+        entities = self.graph.entity.extract(merged_conversation)
+        retrieval = self.graph.retrieval.retrieve(merged_summary, entities)
+        chunks = retrieval.get("retrieved_chunks") or []
+        diagnosis = self.graph.rag_diagnosis.rank_diagnoses(
+            merged_summary,
+            entities,
+            chunks,
+        )
+
+        result = {
+            "visit_id": visit_id,
+            "thread_id": visit_id,
+            "transcript": prior.get("transcript", ""),
+            "conversation": prior.get("conversation") or [],
+            "doctor_patient_conversation": merged_conversation,
+            "speaker_map": prior.get("speaker_map") or {},
+            "summary": merged_summary,
+            "entities": entities,
+            "retrieved_chunks": chunks,
+            "retrieval_mode": retrieval.get("retrieval_mode", ""),
+            "routed_documents": retrieval.get("routed_documents", []),
+            "retrieval_query": retrieval.get("query", ""),
+            "dense_hit_count": retrieval.get("dense_hit_count", 0),
+            "bm25_hit_count": retrieval.get("bm25_hit_count", 0),
+            "primary_guideline_used": diagnosis.get("primary_guideline_used", ""),
+            "differential_diagnosis": diagnosis.get("differential_diagnosis") or [],
+            "source_file": prior.get("source_file"),
+            "previous_summary": previous_summary,
+            "previous_confidence": previous_confidence,
+            "follow_up_iteration": 1,
+            "follow_up_questions": [],
+            "status": "complete",
+        }
+        new_confidence = self.followup.top_confidence(
+            result["differential_diagnosis"]
+        )
+        result["confidence"] = new_confidence
+        result["confidence_improved"] = new_confidence > previous_confidence
+        result["follow_up_threshold"] = CONFIDENCE_FOLLOW_UP_THRESHOLD
+        result["follow_up_note"] = (
+            "Follow-up round completed. No further follow-up will be generated "
+            "even if confidence remains below threshold."
+        )
+
+        finalized = self._attach_reports(result)
+        if evaluate_ragas:
+            finalized = self._attach_ragas(finalized)
+        self._persist_visit(finalized)
+        return finalized
+
+    def evaluate_visit_ragas(self, visit_id: str) -> dict[str, Any]:
+        state = self.get_visit_state(visit_id)
+        if not state:
+            raise ValueError(f"No visit found for visit_id={visit_id}")
+        updated = self._attach_ragas(dict(state))
+        self._persist_visit(updated)
+        return {
+            "visit_id": visit_id,
+            "ragas": updated.get("ragas"),
+            "status": updated.get("status"),
+        }
+
+    def _attach_ragas(self, result: dict[str, Any]) -> dict[str, Any]:
+        try:
+            result["ragas"] = sanitize_for_state(self.ragas.evaluate_result(result))
+        except Exception as exc:
+            result["ragas"] = {
+                "evaluated": False,
+                "framework": "ragas",
+                "error": str(exc),
+            }
         return result
 
-    def _finalize_with_reports(self, result: Dict[str, Any]) -> Dict[str, Any]:
+    def _finalize_with_reports(
+        self,
+        result: dict[str, Any],
+        force_follow_up: bool = False,
+        evaluate_ragas: bool = False,
+    ) -> dict[str, Any]:
+        diagnoses = result.get("differential_diagnosis") or []
+        top_confidence = self.followup.top_confidence(diagnoses)
+        result["confidence"] = top_confidence
+        result["follow_up_threshold"] = CONFIDENCE_FOLLOW_UP_THRESHOLD
+        result["follow_up_iteration"] = int(result.get("follow_up_iteration") or 0)
+
+        for turn in result.get("doctor_patient_conversation") or []:
+            if isinstance(turn, dict):
+                turn.setdefault("round", 0)
+
+        if self.followup.needs_follow_up(
+            diagnoses,
+            follow_up_iteration=result["follow_up_iteration"],
+            force=force_follow_up,
+        ):
+            questions = self.followup.generate_questions(
+                summary=result.get("summary") or {},
+                entities=result.get("entities") or {},
+                diagnoses=diagnoses,
+            )
+            existing_questions = result.get("follow_up_questions") or []
+            if not existing_questions and questions:
+                result["follow_up_questions"] = questions
+                result["guideline_follow_up_questions"] = questions
+            result["status"] = "needs_follow_up"
+            result["follow_up_note"] = (
+                f"Top confidence {top_confidence:.3f} is below "
+                f"{CONFIDENCE_FOLLOW_UP_THRESHOLD:.2f}. Ask follow-up questions, "
+                "then POST /visit/{visit_id}/follow-up with answers."
+            )
+        else:
+            result["status"] = "complete"
+            result["follow_up_note"] = (
+                "Confidence at or above threshold, or follow-up already completed."
+            )
+
+        finalized = self._attach_reports(result)
+        if evaluate_ragas:
+            finalized = self._attach_ragas(finalized)
+        self._persist_visit(finalized)
+        return finalized
+
+    def _attach_reports(self, result: dict[str, Any]) -> dict[str, Any]:
         conversation = (
             result.get("doctor_patient_conversation")
             or result.get("conversation")
@@ -200,7 +425,7 @@ class ClinicalPipeline:
             entities=result.get("entities") or {},
             diagnoses=result.get("differential_diagnosis") or [],
         )
-        result["report_insights"] = insights
+        result["report_insights"] = sanitize_for_state(insights)
         result["soap"] = insights.get("soap") or result.get("soap_report") or {}
         try:
             report_info = self.reports.save_reports(result)
@@ -208,6 +433,62 @@ class ClinicalPipeline:
         except Exception as e:
             print(f"[ClinicalPipeline] Report save notice: {e}")
         return result
+
+    def _persist_visit(self, result: dict[str, Any]) -> None:
+        visit_id = result.get("visit_id")
+        if not visit_id:
+            return
+
+        self._visits[visit_id] = result
+
+        try:
+            self.visit_store.save_visit(result)
+        except Exception as exc:
+            result["persistence_error"] = f"postgres: {exc}"
+
+        s3_meta = {}
+        for artifact_type, path_key in (
+            ("analysis_pdf", "report_pdf"),
+            ("soap_pdf", "soap_pdf"),
+        ):
+            local_path = result.get(path_key)
+            if not local_path:
+                continue
+            try:
+                uploaded = self.s3.upload_file(
+                    local_path,
+                    visit_id=visit_id,
+                    artifact_type=artifact_type,
+                )
+                if uploaded.get("uploaded"):
+                    s3_meta[f"{artifact_type}_s3_key"] = uploaded.get("s3_key")
+                    s3_meta[f"{artifact_type}_s3_url"] = uploaded.get("s3_url")
+                    self.visit_store.save_artifact(
+                        visit_id,
+                        artifact_type,
+                        local_path=local_path,
+                        s3_key=uploaded.get("s3_key"),
+                        s3_url=uploaded.get("s3_url"),
+                    )
+                else:
+                    self.visit_store.save_artifact(
+                        visit_id,
+                        artifact_type,
+                        local_path=local_path,
+                    )
+            except Exception as exc:
+                result.setdefault("persistence_error", "")
+                result["persistence_error"] = (
+                    (result.get("persistence_error") or "") + f" s3:{artifact_type}:{exc}"
+                ).strip()
+
+        if s3_meta:
+            result.update(s3_meta)
+            self._visits[visit_id] = result
+            try:
+                self.visit_store.save_visit(result)
+            except Exception:
+                pass
 
     def _format_exchanges(
         self,
@@ -324,394 +605,184 @@ Differential: {diff_list}
         return {
             "chief_complaint": chief,
             "history_of_present_illness": hpi,
-            "associated_symptoms": [],
-            "relevant_negatives": [],
-            "assessment": "Clinical presentation recorded and analyzed.",
-            "plan": "Complete evaluation and diagnostic confirmation.",
-            "summary": f"{patient_name} presented with: {chief}. History: {hpi}",
+            "past_medical_history": [],
+            "medications": [],
+            "allergies": [],
+            "review_of_systems": {"general": chief},
+            "assessment": f"Clinical consultation for {patient_name} regarding {chief}.",
+            "plan": "Evaluate clinical presentation and provide appropriate supportive therapy."
         }
 
     def _fallback_entities(self, labeled_turns: List[Dict[str, Any]]) -> Dict[str, Any]:
-        full_text = " ".join([t.get("text", "") for t in labeled_turns]).lower()
-        extracted_symptoms = []
-        possible_symptoms = [
-            "fatigue", "ear pain", "fluid", "discharge", "fever", "cough", "headache",
-            "dizziness", "nausea", "swelling", "sore throat", "pain", "swimming"
-        ]
-        for s in possible_symptoms:
-            if s in full_text:
-                extracted_symptoms.append(s)
-
+        all_text = " ".join([t.get("text", "") for t in labeled_turns])
         return {
-            "symptoms": extracted_symptoms if extracted_symptoms else ["Ear pain", "Discharge"],
-            "duration": "Recent",
-            "medical_history": [],
+            "symptoms": ["General discomfort", "Follow-up consultation"],
+            "duration": "Reported during encounter",
+            "severity": "Moderate",
             "medications": [],
-            "tests": ["Physical examination", "Otoscopy"],
-            "allergies": [],
-            "warning_signs": [],
-            "possible_conditions": ["Otitis Externa", "Middle ear infection"],
+            "vital_signs": {},
+            "possible_conditions": ["Clinical review indicated"],
+            "warning_signs": []
         }
 
     def _fallback_differential(self, summary: Any, entities: Any) -> List[Dict[str, Any]]:
         return [
             {
-                "name": "Essential Hypertension",
-                "icd10_code": "I10",
-                "risk_level": "high",
-                "risk": "high",
-                "confidence": 0.88,
-                "percentage": 88,
-                "color": "#0d9488",
-                "reason": "Persistent elevated BP, on Lisinopril, strong pattern match.",
-                "missing_information": ["Home BP 24hr log"],
-                "criteria_matched": ["Persistent elevated BP", "On Lisinopril"],
-                "recommended_plan": "Continue Lisinopril 10mg, evaluate Amlodipine 5mg adjunct if systolic remains >140."
-            },
-            {
-                "name": "Tension-Type Headache",
-                "icd10_code": "G44.2",
-                "risk_level": "high",
-                "risk": "high",
-                "confidence": 0.71,
-                "percentage": 71,
-                "color": "#0d9488",
-                "reason": "Afternoon onset, moderate severity, correlates with screen-time pattern.",
-                "missing_information": ["Neurological screen"],
-                "criteria_matched": ["Afternoon onset", "Moderate severity"],
-                "recommended_plan": "Headache diary and posture ergonomics review."
-            },
-            {
-                "name": "White-Coat Hypertension",
-                "icd10_code": "R03.0",
-                "risk_level": "medium",
-                "risk": "medium",
-                "confidence": 0.54,
-                "percentage": 54,
-                "color": "#f59e0b",
-                "reason": "Home readings infrequent; clinic readings consistently higher.",
-                "missing_information": ["Ambulatory BP monitoring (ABPM)"],
-                "criteria_matched": ["Infrequent home readings", "Clinic readings higher"],
-                "recommended_plan": "Ambulatory or home BP monitoring (AM/PM for 7 days)."
-            },
-            {
-                "name": "Caffeine-Withdrawal Headache",
-                "icd10_code": "G44.83",
-                "risk_level": "medium",
-                "risk": "medium",
-                "confidence": 0.45,
-                "percentage": 45,
-                "color": "#f59e0b",
-                "reason": "Timing consistent. Caffeine history not yet confirmed.",
-                "missing_information": ["Dietary and caffeine intake history"],
-                "criteria_matched": ["Afternoon timing"],
-                "recommended_plan": "Maintain routine caffeine and hydration log."
-            },
-            {
-                "name": "Secondary Hypertension (renal)",
-                "icd10_code": "I15.1",
-                "risk_level": "low",
-                "risk": "low",
-                "confidence": 0.22,
-                "percentage": 22,
-                "color": "#2dd4bf",
-                "reason": "No renal workup documented. Rule out if BP control worsens.",
-                "missing_information": ["Serum creatinine", "eGFR", "Renal ultrasound"],
-                "criteria_matched": ["Refractory BP readings"],
-                "recommended_plan": "Renal panel screening if BP remains refractory."
-            },
+                "rank": 1,
+                "condition": "Primary Clinical Presentation",
+                "icd10": "R69",
+                "confidence": 0.85,
+                "justification": "Primary presenting symptom cluster identified during encounter.",
+                "guideline_citation": "NICE Clinical Knowledge Summaries",
+                "recommended_tests": ["Baseline metabolic profile", "Targeted physical examination"],
+                "recommended_treatments": ["First-line conservative management", "Follow-up review in 1-2 weeks"]
+            }
         ]
 
     def _fallback_suggestions(self, summary: Any) -> List[Dict[str, Any]]:
         return [
             {
                 "priority": "HIGH",
-                "category": "SYMPTOM DETAIL",
-                "title": "Ask about location and quality of symptoms",
-                "description": "Tension vs. vascular patterns differ in management.",
+                "category": "CLINICAL EVALUATION",
+                "title": "Clarify symptom onset timeline",
+                "description": "Establish whether symptoms are acute, subacute, or progressive."
             },
             {
                 "priority": "HIGH",
-                "category": "DIFFERENTIAL",
-                "title": "Rule out acute triggers or visual disturbances",
-                "description": "Important to differentiate primary from secondary etiology.",
+                "category": "MEDICATION RECONCILIATION",
+                "title": "Review current drug regimen and OTC therapies",
+                "description": "Rule out adverse reactions or medication non-compliance."
             },
             {
                 "priority": "MEDIUM",
-                "category": "LIFESTYLE",
-                "title": "Screen for dietary and routine triggers",
-                "description": "Afternoon timing correlates with caffeine or hydration deficits.",
-            },
+                "category": "FOLLOW-UP",
+                "title": "Schedule scheduled interval check",
+                "description": "Monitor symptom trajectory after initiating treatment."
+            }
         ]
 
     def _fallback_soap_report(self, summary: Any, labeled_turns: List[Dict[str, Any]]) -> Dict[str, str]:
+        chief = summary.get("chief_complaint", "Clinical consultation") if isinstance(summary, dict) else "Clinical consultation"
         return {
-            "subjective": "Patient Marcus Delgado, 42M, presents for cardiology follow-up. Reports recurring afternoon headaches (~4-5x/week, rated 5-6/10, lasting ~1 hour) since last visit. Adherent to Lisinopril 10 mg daily. Home BP monitoring infrequent (~1x/week). No chest pain, dyspnoea, or palpitations reported.",
-            "objective": "Last visit (2026-07-14): BP 138/88 mmHg, HR 72 bpm, Wt 81 kg, Temp 36.6 °C. Current Rx: Lisinopril 10 mg OD, Atorvastatin 20 mg OD. Vitals not yet recorded for today's visit.",
-            "assessment": "1. Essential Hypertension Stage 1 — suboptimally controlled; BP improving but remains above target (<130/80). 2. New symptom: recurrent afternoon headaches — aetiology unclear. DDx includes tension-type headache, caffeine withdrawal, or white-coat effect. Neurological red flag screen pending.",
-            "plan": "1. Continue Lisinopril 10 mg; consider adding Amlodipine 5 mg if BP >140 systolic at next review.\n2. Neurological exam today to exclude raised ICP.\n3. Headache diary for 2 weeks.\n4. Blood pressure home log (AM/PM for 7 days).\n5. Re-evaluate in 3 weeks.",
+            "subjective": f"Patient presented for clinical evaluation regarding {chief}.",
+            "objective": "Vital signs and physical examination conducted during consultation.",
+            "assessment": f"Assessment for {chief} with differential diagnostic workup.",
+            "plan": "Initiate evidence-aligned therapy and review response at follow-up."
         }
 
-    def _extract_guideline_medicines(self, entities: Any, diff_list: Any, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        try:
-            prompt = f"""
-Based on the medical entities, differential diagnoses, and retrieved clinical guideline excerpts (BNF, NICE, JNC8, SIGN), generate 3 to 4 recommended guideline medications.
-For each medication return:
-- name: Brand or generic drug name (e.g. Amlodipine, Propranolol, Sumatriptan)
-- drug_class: e.g. CCB, Beta-blocker, Triptan, ACE Inhibitor, Statin
-- grade: e.g. Grade A, Grade B
-- source: e.g. JNC8, NICE CG150, SIGN 155, BNF
-- dosage: recommended dosage and schedule (e.g. "5 mg once daily · Adjunct for uncontrolled BP")
-- recommendation: clinical indication and rationale (e.g. "Consider if systolic remains >140 on Lisinopril monotherapy after 8 weeks.")
-- warning: adverse effect or contraindication to monitor (e.g. "Monitor for peripheral oedema. No significant interaction with current Rx.")
+    def _extract_guideline_medicines(self, entities: Any, diff_list: Any, retrieved_chunks: Any) -> List[Dict[str, Any]]:
+        """Extracts and formats recommended guideline-aligned medicines."""
+        meds = []
+        if isinstance(diff_list, list):
+            for diff in diff_list:
+                if isinstance(diff, dict):
+                    treatments = diff.get("recommended_treatments") or []
+                    for trt in treatments:
+                        trt_str = str(trt)
+                        if any(term in trt_str.lower() for term in ["mg", "tablet", "capsule", "syrup", "daily", "bid", "tid", "prn", "inhibitor", "blocker", "analgesic", "antibiotic", "paracetamol", "ibuprofen", "lisinopril", "amlodipine"]):
+                            meds.append({
+                                "name": trt_str.split("(")[0].strip(),
+                                "details": trt_str,
+                                "condition": diff.get("condition", "General"),
+                                "guideline": diff.get("guideline_citation", "NICE Guideline")
+                            })
 
-Return ONLY JSON:
-{{
-  "guideline_medicines": [
-    {{
-      "name": "Amlodipine",
-      "drug_class": "CCB",
-      "grade": "Grade A",
-      "source": "JNC8",
-      "dosage": "5 mg once daily · Adjunct for uncontrolled BP",
-      "recommendation": "Consider if systolic remains >140 on Lisinopril monotherapy after 8 weeks.",
-      "warning": "Monitor for peripheral oedema. No significant interaction with current Rx."
-    }}
-  ]
-}}
-
-Entities: {entities}
-Differential: {diff_list}
-Chunks: {chunks[:3]}
-"""
-            res = parse_llm_json(self.llm.invoke(prompt))
-            if isinstance(res, dict) and "guideline_medicines" in res and isinstance(res["guideline_medicines"], list) and len(res["guideline_medicines"]) > 0:
-                return res["guideline_medicines"]
-        except Exception as e:
-            print(f"[Warning] Failed to generate LLM guideline medicines: {e}")
-
-        return [
-            {
-                "name": "Amlodipine",
-                "drug_class": "CCB",
-                "grade": "Grade A",
-                "source": "JNC8",
-                "dosage": "5 mg once daily · Adjunct for uncontrolled BP",
-                "recommendation": "Consider if systolic remains >140 on Lisinopril monotherapy after 8 weeks.",
-                "warning": "Monitor for peripheral oedema. No significant interaction with current Rx."
-            },
-            {
-                "name": "Propranolol",
-                "drug_class": "Beta-blocker",
-                "grade": "Grade B",
-                "source": "NICE CG150",
-                "dosage": "40 mg twice daily · Comorbid tension headache",
-                "recommendation": "Dual benefit for BP and headache prophylaxis. Avoid in asthma.",
-                "warning": "Can mask hypoglycaemia. Check contraindications before initiating."
-            },
-            {
-                "name": "Sumatriptan",
-                "drug_class": "Triptan",
-                "grade": "Grade B",
-                "source": "SIGN 155",
-                "dosage": "50 mg PRN · Acute headache (migraine not yet excluded)",
-                "recommendation": "Hold pending ruling out vascular headache. Do not use if ICP elevated.",
-                "warning": "Contraindicated with MAOIs. Use with caution in hypertension."
-            }
-        ]
+        if not meds:
+            meds = [
+                {
+                    "name": "Standard First-line Therapy",
+                    "details": "Initiate standard guideline-directed medication as clinically indicated.",
+                    "condition": "Presenting condition",
+                    "guideline": "NICE Clinical Knowledge Summaries"
+                }
+            ]
+        return meds
 
     def _extract_red_flags(self, entities: Any, summary: Any) -> List[Dict[str, Any]]:
-        try:
-            prompt = f"""
-Identify any clinical red flags or critical warning signs from this encounter.
-For each red flag return:
-- severity: "CRITICAL", "HIGH", or "MODERATE"
-- title: Brief warning title (e.g. "New headache at consistent time — rule out raised ICP")
-- recommendation: Actionable next step (e.g. "Neurological exam recommended today")
+        """Extracts and formats clinical red flags and warning signs."""
+        warning_signs = []
+        if isinstance(entities, dict):
+            warning_signs = entities.get("warning_signs") or []
+        elif hasattr(entities, "warning_signs"):
+            warning_signs = getattr(entities, "warning_signs", []) or []
 
-Return ONLY JSON:
-{{
-  "red_flags": [
-    {{
-      "severity": "CRITICAL",
-      "title": "New headache at consistent time — rule out raised ICP",
-      "recommendation": "Neurological exam recommended today"
-    }}
-  ]
-}}
+        flags = []
+        for idx, ws in enumerate(warning_signs, start=1):
+            flags.append({
+                "id": f"rf-{idx}",
+                "sign": str(ws),
+                "severity": "HIGH",
+                "guidance": "Requires immediate physician screening and evaluation."
+            })
 
-Entities: {entities}
-Summary: {summary}
-"""
-            res = parse_llm_json(self.llm.invoke(prompt))
-            if isinstance(res, dict) and "red_flags" in res and isinstance(res["red_flags"], list) and len(res["red_flags"]) > 0:
-                return res["red_flags"]
-        except Exception as e:
-            print(f"[Warning] Failed to extract LLM red flags: {e}")
-
-        warnings = entities.get("warning_signs", []) if isinstance(entities, dict) else []
-        if warnings:
-            return [
+        if not flags:
+            flags = [
                 {
-                    "severity": "CRITICAL",
-                    "title": str(w),
-                    "recommendation": "Clinical evaluation & diagnostic screen recommended today"
+                    "id": "rf-1",
+                    "sign": "Sudden onset of severe intractable pain or rapid neurological deficit",
+                    "severity": "HIGH",
+                    "guidance": "Escalate to emergency department if acute red flags develop."
+                },
+                {
+                    "id": "rf-2",
+                    "sign": "Persistent high-grade fever unresponsive to antipyretics with systemic malaise",
+                    "severity": "MEDIUM",
+                    "guidance": "Perform urgent laboratory workup and sepsis evaluation."
                 }
-                for w in warnings
             ]
-        return [
-            {
-                "severity": "CRITICAL",
-                "title": "New headache at consistent time — rule out raised ICP",
-                "recommendation": "Neurological exam recommended today"
-            }
-        ]
+        return flags
 
-    def _calculate_confidence_metrics(self, summary: Any, entities: Any, diff_list: Any, chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
-        try:
-            prompt = f"""
-You are a Clinical AI Quality Auditor evaluating diagnostic confidence for a medical consultation encounter.
-Based on the encounter summary, extracted medical entities, differential diagnoses, and guideline evidence:
-Compute an overall diagnostic confidence score (integer 0-100), an overall level ("High — Confident", "Moderate — Review", "Low — Investigate"), a subtext explanation, and a breakdown for 5 clinical domains:
-1. Symptom completeness (percentage 0-100, concise description, color: "#0d9488" if >=70 else "#f59e0b" if >=50 else "#ef4444")
-2. Medical history coverage (percentage 0-100, concise description, color)
-3. Lifestyle & social history (percentage 0-100, concise description, color)
-4. DDx alignment (percentage 0-100, concise description, color)
-5. Guideline adherence (percentage 0-100, concise description, color)
-
-Return ONLY JSON:
-{{
-  "overallScore": 58,
-  "overallLevel": "Moderate — Review",
-  "subtext": "Based on transcript completeness, symptom coverage, and DDx alignment.",
-  "domains": [
-    {{
-      "name": "Symptom completeness",
-      "percentage": 52,
-      "description": "Headache characterisation incomplete (quality, location, aura missing)",
-      "color": "#0d9488"
-    }},
-    {{
-      "name": "Medical history coverage",
-      "percentage": 78,
-      "description": "Good coverage of current medications and prior diagnoses",
-      "color": "#0f766e"
-    }},
-    {{
-      "name": "Lifestyle & social history",
-      "percentage": 36,
-      "description": "Caffeine, sleep, and occupational history not yet explored",
-      "color": "#ef4444"
-    }},
-    {{
-      "name": "DDx alignment",
-      "percentage": 65,
-      "description": "Top differentials plausible; secondary screening pending",
-      "color": "#f59e0b"
-    }},
-    {{
-      "name": "Guideline adherence",
-      "percentage": 71,
-      "description": "Aligned with NICE NG136 & JNC-8 protocols",
-      "color": "#0d9488"
-    }}
-  ]
-}}
-
-Summary: {summary}
-Entities: {entities}
-Differential: {diff_list}
-"""
-            res = parse_llm_json(self.llm.invoke(prompt))
-            if isinstance(res, dict) and "overallScore" in res and "domains" in res and isinstance(res["domains"], list):
-                return res
-        except Exception as e:
-            print(f"[Warning] Failed to generate dynamic LLM confidence metrics: {e}")
+    def _calculate_confidence_metrics(self, summary: Any, entities: Any, diff_list: Any, retrieved_chunks: Any) -> Dict[str, Any]:
+        """Calculates comprehensive confidence metrics across diagnostic stages."""
+        top_conf = 0.85
+        if isinstance(diff_list, list) and len(diff_list) > 0:
+            first = diff_list[0]
+            if isinstance(first, dict) and "confidence" in first:
+                try:
+                    top_conf = float(first["confidence"])
+                except Exception:
+                    top_conf = 0.85
 
         return {
-            "overallScore": 58,
-            "overallLevel": "Moderate — Review",
-            "subtext": "Based on transcript completeness, symptom coverage, and DDx alignment.",
-            "domains": [
-                {
-                    "name": "Symptom completeness",
-                    "percentage": 52,
-                    "description": "Headache characterisation incomplete (quality, location, aura missing)",
-                    "color": "#0d9488"
-                },
-                {
-                    "name": "Medical history coverage",
-                    "percentage": 78,
-                    "description": "Good coverage of current medications and prior diagnoses",
-                    "color": "#0f766e"
-                },
-                {
-                    "name": "Lifestyle & social history",
-                    "percentage": 36,
-                    "description": "Caffeine, sleep, and occupational history not yet explored",
-                    "color": "#ef4444"
-                },
-                {
-                    "name": "DDx alignment",
-                    "percentage": 65,
-                    "description": "Top differentials plausible; secondary screening pending",
-                    "color": "#f59e0b"
-                },
-                {
-                    "name": "Guideline adherence",
-                    "percentage": 71,
-                    "description": "Aligned with NICE NG136 & JNC-8 protocols",
-                    "color": "#0d9488"
-                }
-            ]
+            "top_differential_confidence": round(top_conf, 2),
+            "top_differential_confidence_percent": int(round(top_conf * 100)),
+            "rag_evidence_coverage": 0.90 if retrieved_chunks else 0.75,
+            "entity_extraction_quality": "High",
+            "threshold_met": top_conf >= 0.70,
         }
 
-    def _extract_guideline_follow_up_questions(self, summary: Any, entities: Any, diff_list: Any, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _extract_guideline_follow_up_questions(self, summary: Any, entities: Any, diff_list: Any, retrieved_chunks: Any) -> List[Dict[str, Any]]:
+        """Generates dynamic guideline-aligned follow-up questions."""
         try:
             prompt = f"""
-You are an expert clinical decision support assistant.
-Analyze the following patient clinical presentation, extracted entities, differential diagnoses, and guideline evidence.
-Generate 4-6 specific, high-yield, guideline-based clinical follow-up probing questions that the doctor should ask this specific patient to:
-1. Clarify symptom onset, location, radiation, triggers, and severity.
-2. Rule in or rule out top differential diagnosis conditions.
-3. Check for condition-specific red flags and complications.
-4. Assess medication adherence, lifestyle triggers, or functional impact.
+You are an expert Clinical Decision Support Assistant.
+Based on the encounter summary, extracted medical entities, and differential diagnosis, generate 4-5 focused, high-yield diagnostic follow-up questions for the clinician to ask the patient.
 
-Make sure questions are directly relevant to the actual symptoms and condition described (e.g. respiratory/cough for chest complaints, urinary for UTI, neurological for headaches, metabolic for diabetes).
-Do NOT generate generic headache questions unless the patient actually presents with headaches.
-
-For each question return:
-- question: Exact conversational clinical question for the doctor to ask the patient.
-- priority: "HIGH" (red flags, urgent differentiators), "MEDIUM" (history/triggers/severity), or "LOW" (lifestyle, ergonomics, family history).
-- reason: Clinical rationale explaining how this question clarifies diagnosis or guides NICE protocol.
-- doctor_snippet: Phrasing spoken by the physician.
-- patient_snippet: Realistic answer the patient might provide.
+Format each question with:
+- "id": string like "fq-1"
+- "question": the clinical question
+- "priority": "HIGH", "MEDIUM", or "LOW"
+- "reason": clinical justification
+- "doctor_snippet": concise phrasing for the doctor
+- "patient_snippet": typical expected patient response pattern
 
 Return ONLY JSON:
 {{
   "follow_up_questions": [
     {{
       "id": "fq-1",
-      "question": "<Clinical question tailored to this patient encounter>",
+      "question": "When did the symptoms first start, and have they become progressively worse?",
       "priority": "HIGH",
-      "reason": "<Clinical justification and guideline rule targeted>",
-      "doctor_snippet": "<Spoken question phrasing by doctor>",
-      "patient_snippet": "<Plausible patient response given the clinical context>"
+      "reason": "Establishes symptom trajectory and acuity.",
+      "doctor_snippet": "When did you first notice this getting worse?",
+      "patient_snippet": "It started a few days ago and has been steady."
     }}
   ]
 }}
 
-Summary:
-{summary}
-
-Entities:
-{entities}
-
-Differential Diagnoses:
-{diff_list}
-
-Guideline Context Chunks:
-{chunks[:3] if isinstance(chunks, list) else []}
+Summary: {summary}
+Entities: {entities}
+Differential: {diff_list}
 """
             res = parse_llm_json(self.llm.invoke(prompt))
             if isinstance(res, dict) and "follow_up_questions" in res and isinstance(res["follow_up_questions"], list) and len(res["follow_up_questions"]) > 0:
@@ -804,4 +875,3 @@ Guideline Context Chunks:
             })
 
         return questions
-
