@@ -29,6 +29,8 @@ class ShareSoapReportSchema(BaseModel):
     doctor_id: Optional[str] = None
     doctor_name: Optional[str] = None
     soap_report: Dict[str, Any]
+    prescription: Optional[Dict[str, Any]] = None
+    patient_name: Optional[str] = None
     patient_summary: Optional[str] = None
 
 
