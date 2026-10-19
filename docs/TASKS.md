@@ -44,6 +44,7 @@ gantt
 - [x] **TSK-BE-16:** Institutional Visit Persistence & S3 Cloud Storage: Implemented PostgreSQL schema `cliniIQ` persistence via SQLAlchemy (`app/db/visit_store.py`) and S3 PDF uploads (`app/storage/s3_service.py`).
 - [x] **TSK-BE-17:** RAGAS Validation Framework: Added quantitative RAG quality benchmarking (`app/services/ragas_service.py`, `POST /visit/{visit_id}/ragas`).
 - [x] **TSK-BE-18:** DevOps, Containerization & CI/CD: Added multi-stage `Dockerfile`, `docker-compose.yml`, smoke test scripts, and GitHub Actions CI / ECR deploy workflows.
+- [x] **TSK-BE-22:** Physician Prescription Directives Persistence & Patient Portal Share Endpoint: Enhanced `ShareSoapReportSchema` and `POST /api/scheduling/patients/{patient_id}/share-soap` to accept doctor's custom prescription directives and patient names, embed them inside `soap_report_json`, and dynamically extract structured prescription models in `_extract_prescriptions_from_soap` for seamless patient portal retrieval.
 
 ### 2.2 Active Sprint Tasks (In Progress)
 - [ ] **TSK-BE-19:** Add Redis-based caching layer for guideline vector query results to reduce repeated retrieval lookups.

@@ -1827,6 +1827,11 @@ def share_soap_report_with_patient(
         )
     ).first()
 
+    if not patient and payload.patient_name:
+        patient = db.query(PatientModel).filter(
+            PatientModel.name.ilike(f"%{payload.patient_name.strip()}%")
+        ).first()
+
     if not patient and ("patient" in clean_id.lower() or "@" in clean_id):
         patient = db.query(PatientModel).filter(PatientModel.id == "#00847261").first()
 
@@ -1837,12 +1842,35 @@ def share_soap_report_with_patient(
         raise HTTPException(status_code=404, detail=f"Patient '{patient_id}' not found.")
 
     now_utc = datetime.now(timezone.utc)
+    
+    # Embed prescription and patient demographics into soap_report dict if present
+    if payload.prescription:
+        payload.soap_report["prescription"] = payload.prescription
+    if payload.patient_name or patient.name:
+        payload.soap_report["patientName"] = payload.patient_name or patient.name
+    payload.soap_report["patientId"] = patient.id
+    if payload.doctor_name:
+        payload.soap_report["doctorName"] = payload.doctor_name
+    if payload.encounter_id:
+        payload.soap_report["encounterId"] = payload.encounter_id
+
     soap_json_str = json.dumps(payload.soap_report)
 
-    # Check if a session already exists for this patient
-    existing_session = db.query(PatientConsultationSession).filter(
-        PatientConsultationSession.patient_id == patient.id
-    ).order_by(PatientConsultationSession.session_number.desc()).first()
+    # Check if a session already exists for this patient or encounter
+    existing_session = None
+    if payload.encounter_id:
+        existing_session = db.query(PatientConsultationSession).filter(
+            PatientConsultationSession.encounter_id == payload.encounter_id
+        ).first()
+
+    if not existing_session:
+        existing_session = db.query(PatientConsultationSession).filter(
+            or_(
+                PatientConsultationSession.patient_id == patient.id,
+                PatientConsultationSession.patient_id == patient.pid,
+                PatientConsultationSession.patient_name.ilike(patient.name)
+            )
+        ).order_by(PatientConsultationSession.session_number.desc()).first()
 
     if existing_session:
         existing_session.soap_report_json = soap_json_str
@@ -1963,20 +1991,49 @@ def complete_patient_consultation(
 
 
 def _extract_prescriptions_from_soap(soap_dict: Dict[str, Any], doctor_name: str, date_str: str) -> List[Dict[str, Any]]:
-    """Helper to extract structured prescriptions from SOAP plan & assessment."""
+    """Helper to extract structured prescriptions from SOAP plan & explicit doctor prescription directives."""
     plan_text = soap_dict.get("plan", "") or ""
     prescriptions = []
+    rx_id_counter = 1
+    existing_med_names = set()
+
+    # 1. Prioritize explicit doctor prescription directive if present
+    custom_rx = soap_dict.get("prescription")
+    if custom_rx and isinstance(custom_rx, dict) and custom_rx.get("medication"):
+        med = custom_rx.get("medication", "").strip()
+        strength = custom_rx.get("strength", "").strip()
+        route = custom_rx.get("route", "").strip()
+        freq = custom_rx.get("frequency", "").strip()
+        dur = custom_rx.get("duration", "").strip()
+        qty = custom_rx.get("quantity", "").strip()
+        refills = custom_rx.get("refills", "0")
+        inst = custom_rx.get("instructions", "").strip() or f"Take {strength} {route} {freq} for {dur}."
+
+        prescriptions.append({
+            "id": f"rx-prescribed-{rx_id_counter}",
+            "title": f"{med} — {strength}",
+            "name": med,
+            "dosage": f"{strength} · {route}",
+            "badge": "active",
+            "statusClass": "active",
+            "doctorDate": f"{doctor_name} · Issued {date_str}",
+            "instructions": inst,
+            "refillInfo": f"{qty} · {refills} refill(s)",
+            "soapReport": soap_dict,
+            "prescription": custom_rx
+        })
+        rx_id_counter += 1
+        existing_med_names.add(med.lower())
 
     # Common medication patterns
     med_pattern = re.compile(r'([A-Za-z]+(?:\s+[A-Za-z]+)?)\s+(\d+\s*(?:mg|mcg|g|ml|IU))\s*([^\.\n\d;]*)', re.IGNORECASE)
     matches = med_pattern.findall(plan_text)
 
-    rx_id_counter = 1
     if matches:
         for match in matches:
             med_name = match[0].strip()
-            # Filter out non-medication phrases
-            if med_name.lower() in ["schedule", "recommend", "encourage", "systolic", "diastolic", "follow up", "follow-up"]:
+            # Filter out non-medication phrases and duplicates
+            if med_name.lower() in ["schedule", "recommend", "encourage", "systolic", "diastolic", "follow up", "follow-up"] or med_name.lower() in existing_med_names:
                 continue
             dosage = match[1].strip()
             instructions = match[2].strip() or "As directed by physician"

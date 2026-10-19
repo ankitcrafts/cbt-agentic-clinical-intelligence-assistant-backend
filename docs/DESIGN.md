@@ -131,6 +131,33 @@
 }
 ```
 
+### 2.4 Doctor Share SOAP & Prescription Schema
+```json
+// POST /api/scheduling/patients/{patient_id}/share-soap
+{
+  "encounter_id": "ENC-6554743-1284",
+  "doctor_id": "DOC-8492",
+  "doctor_name": "Dr. Yuki Tanaka",
+  "patient_name": "Asmit Bhardwaj",
+  "soap_report": {
+    "subjective": "Patient presents with increased urinary frequency...",
+    "objective": "BP: 120/80 mmHg, HR: 72 bpm. Abdomen soft...",
+    "assessment": "Urinary Tract Infection (UTI) under evaluation...",
+    "plan": "1. Prescribed Amoxicillin 500mg. 2. Increase hydration. 3. Follow-up in 7 days."
+  },
+  "prescription": {
+    "medication": "Amoxicillin",
+    "strength": "500 mg",
+    "route": "Oral",
+    "frequency": "Three times daily",
+    "duration": "7 days",
+    "quantity": "21 capsules",
+    "refills": 0,
+    "instructions": "Take one capsule three times daily with a full glass of water after meals until completed."
+  }
+}
+```
+
 ---
 
 ## 3. Database Schema Models (SQLAlchemy)

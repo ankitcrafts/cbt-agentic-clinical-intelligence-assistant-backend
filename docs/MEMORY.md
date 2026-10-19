@@ -45,6 +45,10 @@
 * **Decision:** Implement `VisitStore` (SQLAlchemy/PostgreSQL schema `cliniIQ`) for visit metadata and conversation history, `S3Service` for clinical report artifact storage, and `RagasEvaluationService` for automated faithfulness, answer relevancy, and context precision scoring.
 * **Consequence:** Complete institutional persistence and quantitative RAG pipeline benchmarking.
 
+### ADR-BE-09: Prescription Directives Persistence in SOAP Record & Portal Harmonization
+* **Context:** When physicians finalize and share a consultation report, custom prescribed medications must be permanently attached to the encounter session record and automatically surfaced in the patient portal.
+* **Decision:** Extended `ShareSoapReportSchema` to accept optional `prescription` and `patient_name`. In `POST /api/scheduling/patients/{patient_id}/share-soap`, embedded `payload.prescription` into `payload.soap_report["prescription"]` and persisted to `patient_consultation_sessions.soap_report_json`. Updated `_extract_prescriptions_from_soap()` to detect and prioritize explicit doctor's prescription directives over regex heuristic parsing, ensuring the exact drug, strength, route, frequency, duration, quantity, refills, and instructions are extracted and returned to the patient portal summary (`/portal-summary`).
+* **Consequence:** Immediate and persistent availability of doctor-prescribed medication directives in both the patient portal and database records.
 
 ---
 
