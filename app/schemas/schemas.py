@@ -36,6 +36,11 @@ class PipelineResponse(BaseModel):
 class AnalyzeConversationRequest(BaseModel):
     conversation: list[dict[str, Any]]
     transcript: Optional[str] = ""
+    doctor_name: Optional[str] = None
+    patient_name: Optional[str] = None
+    doctor_initials: Optional[str] = None
+    patient_initials: Optional[str] = None
+    visit_id: Optional[str] = None
 
 
 class SOAPReportSchema(BaseModel):

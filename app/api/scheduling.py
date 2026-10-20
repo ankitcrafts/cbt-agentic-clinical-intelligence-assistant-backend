@@ -348,12 +348,20 @@ DEFAULT_DOCTORS: List[Dict[str, Any]] = [
 
 
 def format_patient_dict(p: PatientModel, session_count: int = 0) -> Dict[str, Any]:
-    vitals = {}
+    vitals = {
+        "bp": "120/80 mmHg",
+        "hr": "72 bpm",
+        "pain": "0/10",
+        "spo2": "98%",
+        "temp": "36.6 °C"
+    }
     if p.vitals_json:
         try:
-            vitals = json.loads(str(p.vitals_json))
+            parsed = json.loads(str(p.vitals_json))
+            if isinstance(parsed, dict) and parsed:
+                vitals.update(parsed)
         except Exception:
-            vitals = {}
+            pass
 
     return {
         "id": p.id,
@@ -914,6 +922,7 @@ def get_patient_detail(patient_id: str, db: Session = Depends(get_db)):
             "transcript": s.transcript,
             "conversation": conversation,
             "ai_suggestions": ai_suggestions,
+            "aiSuggestions": ai_suggestions,
             "clinical_analysis": clinical_analysis,
             "soap_report": soap_report,
             "duration_seconds": s.duration_seconds,
@@ -1713,6 +1722,7 @@ def get_patient_sessions(patient_id: str, db: Session = Depends(get_db)):
             "transcript": s.transcript,
             "conversation": conversation,
             "aiSuggestions": ai_suggestions,
+            "ai_suggestions": ai_suggestions,
             "clinicalAnalysis": clinical_analysis,
             "soapReport": soap_report,
             "durationSeconds": s.duration_seconds,

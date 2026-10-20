@@ -54,7 +54,11 @@ The **ClinIQ Backend** is a high-performance, agentic microservice built on Fast
 * **FR-BE-4.1:** Generate secure 6-digit cryptographic OTPs with 5-minute time-to-live (TTL).
 * **FR-BE-4.2:** Dispatch OTPs and booking confirmations via Gmail SMTP.
 * **FR-BE-4.3:** Issue signed JSON Web Tokens (JWT) containing user ID, email, and role.
-* **FR-BE-4.4:** Doctor schedule configuration with automated 30-minute slot generation, buffer intervals, and double-booking prevention.
+* **FR-4.4:** Doctor schedule configuration with automated 30-minute slot generation, buffer intervals, and double-booking prevention.
+* **FR-BE-4.5:** Consultation Session Persistence & Symmetrical Suggestion Serialization: Persist finalized encounter session records (`PatientConsultationSession`) with complete transcript exchanges, clinical analysis, SOAP reports, and AI suggestions. Endpoints must symmetrically emit both `ai_suggestions` and `aiSuggestions` arrays to guarantee compatibility across diverse client schemas.
+* **FR-BE-4.6:** Triage Vitals Baseline & Smart Dialogue Fallback Extraction: Patient retrieval schemas must emit baseline adult triage vitals (`bp`, `hr`, `spo2`, `temp`) rather than empty objects `{}`. Fallback entity extraction must analyze conversation text to extract reported symptoms, blood pressure, heart rate, and elevated blood glucose.
+* **FR-BE-4.7:** Full Dynamic 5-Tab CDS Output Serialization: All audio upload endpoints (MS Teams, Google Meet, WhatsApp, In-Person) and dialogue analysis endpoints must return complete, dynamically synthesized clinical models for all 5 CDS tabs (`differential_diagnosis`, `guideline_medicines`, `red_flags`, `confidence_metrics`, `follow_up_questions`, `soap_report`). Fallback pipelines must generate condition-adaptive hypotheses with ICD-10 codes, dosages, 5-domain confidence breakdowns, and dialogue-derived SOAP reports.
+
 
 ---
 

@@ -158,7 +158,124 @@
 }
 ```
 
+### 2.5 Consultation Session Retrieval Schema
+```json
+// GET /api/scheduling/patients/{patient_id}/sessions
+{
+  "success": true,
+  "patientId": "#6554743",
+  "count": 1,
+  "data": [
+    {
+      "id": "sess-6554743-1-3829",
+      "encounterId": "CONS-6554743-1",
+      "sessionNumber": 1,
+      "sessionTitle": "Session 1: Going toilet every time for urination",
+      "doctorId": "DOC-2849",
+      "doctorName": "Dr. Ankit Kumar",
+      "appointmentDate": "2026-10-11T09:15:00Z",
+      "transcript": "Doctor: Hello Asmit...",
+      "conversation": [ ... ],
+      "aiSuggestions": [
+        {
+          "id": 1,
+          "type": "high",
+          "tag": "HIGH · CLINICAL EVALUATION",
+          "text": "Clarify symptom onset timeline — Establish whether symptoms are acute, subacute, or progressive."
+        }
+      ],
+      "ai_suggestions": [ ... ],
+      "clinicalAnalysis": { ... },
+      "soapReport": { ... },
+      "durationSeconds": 480,
+      "status": "COMPLETED"
+    }
+  ]
+}
+```
+
+### 2.6 Patient Vitals Schema
+```json
+// Embedded in PatientModel / format_patient_dict / VitalsSchema
+{
+  "bp": "120/80 mmHg",
+  "hr": "72 bpm",
+  "pain": "0/10",
+  "spo2": "98%",
+  "temp": "36.6 °C",
+  "weight": "75 kg",
+  "glucose": "95 mg/dL"
+}
+```
+* Note: `format_patient_dict` guarantees standard baseline keys are always populated, preventing `{}` from ever reaching clients.
+
+### 2.6 Dynamic 5-Tab CDS Clinical Analysis Contract
+```json
+// Root & nested clinical_analysis response contract:
+{
+  "differential_diagnosis": [
+    {
+      "rank": 1,
+      "title": "Type 2 Diabetes Mellitus",
+      "icdCode": "E11.9",
+      "percentage": 88,
+      "risk": "high",
+      "color": "#0d9488",
+      "description": "Evaluated based on clinical symptoms and encounter context."
+    }
+  ],
+  "confidence_metrics": {
+    "overallScore": 78,
+    "overallLevel": "High — Validated",
+    "subtext": "Strong diagnostic concordance achieved.",
+    "domains": [
+      { "name": "Symptom completeness", "percentage": 85, "color": "#0d9488" },
+      { "name": "Medical history coverage", "percentage": 90, "color": "#0f766e" },
+      { "name": "Lifestyle & social history", "percentage": 75, "color": "#0d9488" },
+      { "name": "DDx alignment", "percentage": 88, "color": "#0d9488" },
+      { "name": "Guideline adherence", "percentage": 86, "color": "#0d9488" }
+    ]
+  },
+  "guideline_medicines": [
+    {
+      "name": "Metformin Hydrochloride",
+      "drugClass": "Biguanide",
+      "grade": "Grade A",
+      "source": "NICE NG28 / BNF",
+      "dosage": "500 mg PO once daily with meals",
+      "recommendation": "First-line therapy for glycemic control.",
+      "warning": "Discontinue if eGFR < 30 mL/min/1.73m²."
+    }
+  ],
+  "red_flags": [
+    {
+      "severity": "CRITICAL",
+      "title": "Diabetic Ketoacidosis / HHS Screen",
+      "recommendation": "Immediate capillary blood glucose and ketone check."
+    }
+  ],
+  "follow_up_questions": [
+    {
+      "id": "fq-1",
+      "question": "Have you noticed increased frequency of urination at night?",
+      "priority": "HIGH",
+      "asked": false,
+      "answered": false,
+      "doctor_snippet": "Have you noticed waking up to urinate?",
+      "patient_snippet": "Yes, two or three times every night."
+    }
+  ],
+  "soap_report": {
+    "subjective": "Patient reports...",
+    "objective": "BP 120/80 mmHg...",
+    "assessment": "1. Type 2 Diabetes Mellitus (E11.9)...",
+    "plan": "1. Metformin 500mg..."
+  }
+}
+```
+
 ---
+
 
 ## 3. Database Schema Models (SQLAlchemy)
 

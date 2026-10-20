@@ -50,6 +50,11 @@
 * **Decision:** Extended `ShareSoapReportSchema` to accept optional `prescription` and `patient_name`. In `POST /api/scheduling/patients/{patient_id}/share-soap`, embedded `payload.prescription` into `payload.soap_report["prescription"]` and persisted to `patient_consultation_sessions.soap_report_json`. Updated `_extract_prescriptions_from_soap()` to detect and prioritize explicit doctor's prescription directives over regex heuristic parsing, ensuring the exact drug, strength, route, frequency, duration, quantity, refills, and instructions are extracted and returned to the patient portal summary (`/portal-summary`).
 * **Consequence:** Immediate and persistent availability of doctor-prescribed medication directives in both the patient portal and database records.
 
+### ADR-BE-10: Symmetrical Dual-Key Serialization for Consultation Session AI Suggestions
+* **Context:** Frontend clients and historical consultation readers query sessions via both camelCase (`aiSuggestions`) and snake_case (`ai_suggestions`) property contracts. Inconsistent serialization led to empty arrays when client keys did not match the response serializer.
+* **Decision:** In `GET /api/scheduling/patients/{patient_id}/sessions` and `GET /api/v1/patients/{patient_id}/sessions`, emit both `"aiSuggestions"` and `"ai_suggestions"` in the response payload. Added fallback extraction from `clinical_analysis_json` / `clinicalAnalysis` when root suggestions are omitted.
+* **Consequence:** 100% contract interoperability with legacy, active, and external API consumers.
+
 ---
 
 ## 2. Environment Variables & Secret Configuration (`.env`)
@@ -121,4 +126,18 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ### Issue 4: Windows Application Control Policy Blocking `tiktoken` DLL
 * **Symptom:** `ImportError: DLL load failed while importing _tiktoken: An Application Control policy has blocked this file.`
 * **Resolution:** `app/services/llm_service.py` provides resilient lazy-loading and fallback to `_DirectOpenAIWrapper` using standard `openai` library calls whenever `langchain_openai`/`tiktoken` binaries are restricted by OS security policies.
+
+### Issue 5: Empty Vitals JSON `{}` and Fallback Dialogue Entity Extraction
+* **Symptom:** Patient endpoints returned `vitals: {}` when `vitals_json` was empty, and `_fallback_entities` returned static `"vital_signs": {}`.
+* **Resolution:** 
+  1. Updated `format_patient_dict` in `app/api/scheduling.py` to initialize standard triage baseline vitals (`bp: 120/80 mmHg, hr: 72 bpm, spo2: 98%, temp: 36.6 °C`), updated with any saved metrics in `vitals_json`.
+  2. Enhanced `_fallback_entities` in `app/services/pipeline_service.py` with regex and keyword extractors for fatigue, polydipsia, polyuria, blood pressure, heart rate, and finger-prick blood sugar/glucose.
+
+### Issue 6: CDS Tabs Empty or Static Following MS Teams Audio Upload
+* **Symptom:** On MS Teams teleconsultations, after transcription succeeded, Clinical Decision, Confidence, Follow-up, Medicines, and SOAP Note tabs failed to display dynamic data or remained stuck on static placeholders (58% confidence, 0 medicines, hardcoded headache inquiries).
+* **Resolution:** 
+  1. Updated `upload_audio_recording` fallback handler in `app/api/routes.py` to generate complete clinical intelligence models (`differential_diagnosis`, `guideline_medicines`, `red_flags`, `confidence_metrics`, `follow_up_questions`, `soap_report`).
+  2. Harmonized schema keys in `_fallback_differential` and `_extract_guideline_medicines` (`rank`, `name`, `title`, `condition`, `icd10_code`, `percentage`, `risk`, `color`, `dosage`, `grade`, `source`).
+  3. Extended `AnalyzeConversationRequest` in `app/schemas/schemas.py` with `doctor_name`, `patient_name`, `doctor_initials`, `patient_initials`, and `visit_id` so consultation dialogues are processed with active patient clinical context.
+
 

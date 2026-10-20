@@ -102,6 +102,14 @@ class ClinicalState(TypedDict):
     created_at: str
 ```
 
+### 2.2 5-Tab Symmetrical Output Mapping
+The pipeline normalizes LLM, RAG, and fallback outputs into 5 distinct CDS tab models emitted at both root level and within `clinical_analysis`:
+1. **Differential Diagnosis:** Array of hypotheses with `rank`, `title`, `icdCode`, `percentage`, `risk`, `color`, `description`.
+2. **Confidence Metrics:** `overallScore`, `overallLevel`, `subtext`, and 5-domain breakdown (`Symptom completeness`, `Medical history coverage`, `Lifestyle & social history`, `DDx alignment`, `Guideline adherence`).
+3. **Follow-up Protocol Inquiries:** Array of inquiries with `id`, `question`, `priority`, `asked`, `answered`, `doctor_snippet`, `patient_snippet`.
+4. **Guideline Medicines:** Evidence-graded medications with `name`, `drugClass`, `grade`, `source`, `dosage`, `recommendation`, `warning`.
+5. **SOAP Report:** Complete structured narrative (`subjective`, `objective`, `assessment`, `plan`).
+
 ---
 
 ## 3. Database Architecture & ER Diagram
@@ -180,3 +188,21 @@ erDiagram
    * Creates a dedicated `ClinIQ_Reports` folder on the Google Drive if not already present.
    * Uploads the PDF stream with MIME type `application/pdf`.
    * Sets permission `reader` for public preview or specified doctor/patient email.
+
+---
+
+## 5. Session Persistence & Symmetrical Serialization Architecture
+
+* **Encounter Model (`PatientConsultationSession`):** Persists `conversation_json`, `ai_suggestions_json`, `clinical_analysis_json`, and `soap_report_json`.
+* **Symmetrical Serialization:**
+  * Endpoints `/api/scheduling/patients/{patient_id}/sessions` and `/api/v1/patients/{patient_id}/sessions` emit both camelCase (`aiSuggestions`) and snake_case (`ai_suggestions`).
+  * Deserialization gracefully falls back to extract nested suggestions from `clinical_analysis_json` if `ai_suggestions_json` is unpopulated, preventing empty state degradation.
+
+---
+
+## 6. Triage Vitals Baseline & Dynamic Entity Extraction Pipeline
+
+* **Triage Vitals Defaulting:** In `format_patient_dict` (`app/api/scheduling.py`), patient vitals are seeded with standard adult baseline parameters (`bp: 120/80 mmHg, hr: 72 bpm, spo2: 98%, temp: 36.6 °C`), updated with parsed values from `vitals_json` if present. This guarantees client applications never receive empty dictionary objects `{}`.
+* **Smart Dialogue Entity Fallback:** `PipelineService._fallback_entities` inspects spoken conversation turns using targeted regex and keyword pattern matching to capture fatigue, polydipsia, polyuria, chest discomfort, blood pressure, heart rate, and finger-prick blood sugar/glucose metrics when upstream LLM extraction is unavailable.
+
+

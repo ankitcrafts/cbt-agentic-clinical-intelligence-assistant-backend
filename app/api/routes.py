@@ -120,14 +120,27 @@ async def upload_recording(
                         patient_initials=patient_initials or "PT",
                     )
                     ai_suggestions = pipeline._fallback_suggestions({})
+                    summary = pipeline._fallback_summary(labeled.get("conversation", []), patient_name or "Patient")
+                    entities = pipeline._fallback_entities(labeled.get("conversation", []))
+                    diff_list = pipeline._fallback_differential(summary, entities)
+                    guideline_medicines = pipeline._extract_guideline_medicines(entities, diff_list, [])
+                    red_flags = pipeline._extract_red_flags(entities, summary)
+                    confidence_metrics = pipeline._calculate_confidence_metrics(summary, entities, diff_list, [])
+                    follow_up_questions = pipeline._extract_guideline_follow_up_questions(summary, entities, diff_list, [])
+                    soap_report = pipeline._fallback_soap_report(summary, labeled.get("conversation", []))
                     clinical_analysis = {
-                        "summary": pipeline._fallback_summary(labeled.get("conversation", []), patient_name or "Patient"),
-                        "entities": pipeline._fallback_entities(labeled.get("conversation", [])),
-                        "differential_diagnosis": pipeline._fallback_differential({}, {}),
-                        "soap_report": pipeline._fallback_soap_report({}, labeled.get("conversation", [])),
+                        "summary": summary,
+                        "entities": entities,
+                        "differential_diagnosis": diff_list,
+                        "guideline_medicines": guideline_medicines,
+                        "red_flags": red_flags,
+                        "confidence_metrics": confidence_metrics,
+                        "follow_up_questions": follow_up_questions,
+                        "guideline_follow_up_questions": follow_up_questions,
+                        "soap_report": soap_report,
                         "ai_suggestions": ai_suggestions,
                     }
-                    pipeline_res = clinical_analysis
+                    pipeline_res = dict(clinical_analysis)
                     recording_status += " & Transcribed (Fallback)"
                 except Exception as fallback_err:
                     print(f"[Error] Deepgram direct fallback failed: {fallback_err}")
@@ -221,10 +234,22 @@ async def upload_recording(
             "exchanges": exchanges,
             "ai_suggestions": ai_suggestions,
             "aiSuggestions": ai_suggestions,
-            "summary": pipeline_res.get("summary"),
-            "entities": pipeline_res.get("entities"),
-            "differential_diagnosis": pipeline_res.get("differential_diagnosis"),
-            "soap_report": pipeline_res.get("soap_report"),
+            "summary": pipeline_res.get("summary") or clinical_analysis.get("summary"),
+            "entities": pipeline_res.get("entities") or clinical_analysis.get("entities"),
+            "differential_diagnosis": pipeline_res.get("differential_diagnosis") or clinical_analysis.get("differential_diagnosis") or [],
+            "differentialDiagnosis": pipeline_res.get("differential_diagnosis") or clinical_analysis.get("differential_diagnosis") or [],
+            "guideline_medicines": pipeline_res.get("guideline_medicines") or clinical_analysis.get("guideline_medicines") or [],
+            "guidelineMedicines": pipeline_res.get("guideline_medicines") or clinical_analysis.get("guideline_medicines") or [],
+            "red_flags": pipeline_res.get("red_flags") or clinical_analysis.get("red_flags") or [],
+            "redFlags": pipeline_res.get("red_flags") or clinical_analysis.get("red_flags") or [],
+            "confidence_metrics": pipeline_res.get("confidence_metrics") or clinical_analysis.get("confidence_metrics") or {},
+            "confidenceMetrics": pipeline_res.get("confidence_metrics") or clinical_analysis.get("confidence_metrics") or {},
+            "follow_up_questions": pipeline_res.get("follow_up_questions") or clinical_analysis.get("follow_up_questions") or [],
+            "followUpQuestions": pipeline_res.get("follow_up_questions") or clinical_analysis.get("follow_up_questions") or [],
+            "guideline_follow_up_questions": pipeline_res.get("guideline_follow_up_questions") or clinical_analysis.get("guideline_follow_up_questions") or [],
+            "guidelineFollowUpQuestions": pipeline_res.get("guideline_follow_up_questions") or clinical_analysis.get("guideline_follow_up_questions") or [],
+            "soap_report": pipeline_res.get("soap_report") or clinical_analysis.get("soap_report") or {},
+            "soapReport": pipeline_res.get("soap_report") or clinical_analysis.get("soap_report") or {},
             "clinical_analysis": clinical_analysis,
             "clinicalAnalysis": clinical_analysis,
             "message": "Audio recording uploaded to Google Drive & transcribed successfully!" if gdrive_result.get("success") else "Audio recording processed and transcribed successfully.",
@@ -386,10 +411,26 @@ def analyze_conversation_payload(payload: AnalyzeConversationRequest):
     entity extraction, and differential diagnosis.
     """
     try:
-        return pipeline.run_from_conversation(
+        res = pipeline.run_from_conversation(
             conversation=payload.conversation,
             transcript=payload.transcript or "",
+            doctor_name=payload.doctor_name or "Dr. Yuki Tanaka",
+            patient_name=payload.patient_name or "Marcus Delgado",
+            doctor_initials=payload.doctor_initials or "YT",
+            patient_initials=payload.patient_initials or "MD",
+            visit_id=payload.visit_id,
         )
+        ca = res.get("clinical_analysis") or {}
+        for key in ["guideline_medicines", "red_flags", "confidence_metrics", "follow_up_questions", "guideline_follow_up_questions"]:
+            if key not in res and key in ca:
+                res[key] = ca[key]
+        res["clinicalAnalysis"] = ca
+        res["soapReport"] = res.get("soap_report") or ca.get("soap_report") or {}
+        res["differentialDiagnosis"] = res.get("differential_diagnosis") or ca.get("differential_diagnosis") or []
+        res["confidenceMetrics"] = res.get("confidence_metrics") or ca.get("confidence_metrics") or {}
+        res["guidelineMedicines"] = res.get("guideline_medicines") or ca.get("guideline_medicines") or []
+        res["guidelineFollowUpQuestions"] = res.get("guideline_follow_up_questions") or ca.get("guideline_follow_up_questions") or []
+        return res
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

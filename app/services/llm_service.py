@@ -92,6 +92,7 @@ class LLMService:
                         api_key=openrouter_key,
                         model=openrouter_model,
                         temperature=0.2,
+                        max_tokens=2048,
                     )
                 except Exception as oe:
                     print(f"[LLMService] OpenRouter ChatOpenAI warning: {oe}")
@@ -106,12 +107,14 @@ class LLMService:
 
         # 3. Groq
         groq_client = None
+        groq_model = str(settings.get("GROQ_MODEL") or "qwen/qwen3.8-27b")
         if groq_key:
             if ChatGroq:
                 try:
                     groq_client = ChatGroq(
-                        model="llama-3.3-70b-versatile",
+                        model=groq_model,
                         api_key=groq_key,
+                        max_tokens=2048,
                     )
                 except Exception as gqe:
                     print(f"[LLMService] ChatGroq warning: {gqe}")
@@ -119,7 +122,7 @@ class LLMService:
                 groq_client = _DirectOpenAIWrapper(
                     base_url="https://api.groq.com/openai/v1",
                     api_key=groq_key,
-                    model="llama-3.3-70b-versatile",
+                    model=groq_model,
                     timeout=30,
                     max_tokens=2048,
                 )

@@ -19,6 +19,7 @@ Return ONLY JSON:
   "medications": [],
   "tests": [],
   "allergies": [],
+  "vital_signs": {{}},
   "warning_signs": [],
   "possible_conditions": []
 }}
