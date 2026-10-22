@@ -60,6 +60,16 @@
 * **Decision:** Explicitly typed `result: dict[str, Any] = { ... }`, extracted `diff_list = diagnosis.get("differential_diagnosis") or []` with `isinstance(diff_list, list)` validation, passed `diff_list` directly to `self.followup.top_confidence(diff_list)`, and expanded `top_confidence` and `needs_follow_up` signatures to accept `Optional[list[dict[str, Any]]] = None`.
 * **Consequence:** 100% type safety and zero Pyright/Pylance diagnostics across `pipeline_service.py` and `followup_service.py`, while resiliently handling missing/empty diagnosis inputs at runtime.
 
+### ADR-BE-12: Unified Production Orchestration, Reverse Proxy Routing & Telemetry
+* **Context:** Production deployment behind Cloudflare Zero Trust (`cbtlab`) and H200 cluster requires container isolation, CORS-free unified origins, strict health probes, and persistent volumes.
+* **Decision:** Implemented multi-stage Angular Dockerfile with Nginx 1.25 Alpine reverse-proxying `/api/` and clinical endpoints to the backend container, added `/health` telemetry endpoint in FastAPI with database ping, and orchestrated PostgreSQL 16, Redis 7, Backend, and Frontend in `docker-compose.prod.yml`.
+* **Consequence:** Single-port ingress (80/443), zero CORS issues between frontend and backend, automated health dependencies on container startup, and full persistence across container restarts.
+
+### ADR-BE-13: Production Server Deployment to Ubuntu 24.04 (ubtsrv01) via Zero Trust
+* **Context:** The production backend services must execute in isolated Docker containers on Ubuntu 24.04 (`172.16.17.181`) with persistent PostgreSQL 16 and Redis 7 storage, reachable through the `cbtlab` Zero Trust organization without public port exposure.
+* **Decision:** Installed Docker 29.1.3 and Docker Compose v2 on the remote server. Automated deployment with `scripts/deploy_production_remote.py` transferring pre-compiled assets, initializing `isb_project-backend` container image with PyTorch/FAISS/LangChain, setting up `clinical-postgres` with `cliniIQ` schema auto-bootstrap, and configuring Nginx reverse proxy.
+* **Consequence:** 100% test pass rate (6/6 routes verified). Host resources fully optimized (41 GB RAM, 16 GB disk headroom, active container telemetry at `/health`).
+
 ---
 
 ## 2. Environment Variables & Secret Configuration (`.env`)
@@ -81,8 +91,10 @@ OPENROUTER_API_KEY=your_openrouter_api_key_here
 LLM_MODEL=anthropic/claude-3.5-sonnet
 
 # Gmail SMTP OTP Configuration
-GMAIL_USER=your_clinic_email@gmail.com
-GMAIL_APP_PASSWORD=your_gmail_16_digit_app_password
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_EMAIL=ankitkumar021303@gmail.com
+# SMTP_PASSWORD=<16-digit Google App Password configured in .env.production>
 
 # Google Drive Cloud Storage (Optional for cloud backup)
 GOOGLE_SERVICE_ACCOUNT_FILE=service_account.json

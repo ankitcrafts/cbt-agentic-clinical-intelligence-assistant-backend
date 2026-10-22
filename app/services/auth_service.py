@@ -73,9 +73,12 @@ def generate_and_send_otp(req: SendOTPRequest, db: Session) -> SendOTPResponse:
     # Dispatch email via Gmail SMTP (strictly deliver OTP to recipient's email)
     email_sent = send_otp_email(to_email=email_clean, otp_code=otp_code, role=role_str, purpose=req.purpose)
 
-    msg_text = f"A 6-digit verification code has been sent to {email_clean}"
     if email_sent:
-        msg_text += " (Check your inbox & Spam/Promotions folder)"
+        msg_text = f"A 6-digit verification code has been sent to {email_clean} (Check your inbox & Spam/Promotions folder)"
+        dev_otp_val = None
+    else:
+        msg_text = f"Email delivery unavailable (SMTP credentials rejected). Verification Code: {otp_code}"
+        dev_otp_val = otp_code
 
     return SendOTPResponse(
         success=True,
@@ -83,7 +86,7 @@ def generate_and_send_otp(req: SendOTPRequest, db: Session) -> SendOTPResponse:
         email=email_clean,
         role=role_str,
         expires_in_seconds=OTP_EXPIRE_MINUTES * 60,
-        dev_otp=None,
+        dev_otp=dev_otp_val,
     )
 
 

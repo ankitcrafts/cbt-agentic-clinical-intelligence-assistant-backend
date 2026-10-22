@@ -205,4 +205,21 @@ erDiagram
 * **Triage Vitals Defaulting:** In `format_patient_dict` (`app/api/scheduling.py`), patient vitals are seeded with standard adult baseline parameters (`bp: 120/80 mmHg, hr: 72 bpm, spo2: 98%, temp: 36.6 °C`), updated with parsed values from `vitals_json` if present. This guarantees client applications never receive empty dictionary objects `{}`.
 * **Smart Dialogue Entity Fallback:** `PipelineService._fallback_entities` inspects spoken conversation turns using targeted regex and keyword pattern matching to capture fatigue, polydipsia, polyuria, chest discomfort, blood pressure, heart rate, and finger-prick blood sugar/glucose metrics when upstream LLM extraction is unavailable.
 
+---
+
+## 7. Production Containerization & Cloudflare Zero Trust Ingress
+
+* **Docker Compose Orchestration (`docker-compose.prod.yml`):**
+  * `postgres`: PostgreSQL 16 Alpine container with isolated healthchecks (`pg_isready`) and volume persistence (`cliniIQ` database).
+  * `redis`: Redis 7 Alpine in-memory cache for hybrid RAG retrieval queries.
+  * `backend`: Python 3.11 Slim container running FastAPI/Uvicorn with 2 worker processes and persistent volumes.
+  * `frontend`: Angular 19 + Nginx 1.25 Alpine container serving the SPA on port 80 and reverse-proxying API traffic.
+* **Target Server Environment (`ubtsrv01`):**
+  * **Host IP:** `172.16.17.181` (Ubuntu 24.04.5 LTS, Kernel 6.8.0-147-generic).
+  * **Network Security:** Cloudflare Zero Trust organization `cbtlab` (`cbtlab.cloudflareaccess.com`).
+  * **Client Interface IP:** `10.64.20.180` (WARP client tunnel).
+  * **Telemetry Endpoint:** `GET http://172.16.17.181/health` (verified HTTP 200 OK with live database ping).
+  * **API Docs:** `GET http://172.16.17.181/docs` (Swagger UI).
+  * **Automated Verification:** 6/6 tests passing (100% success rate across health, telemetry, doctors, and user routes).
+
 

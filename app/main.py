@@ -93,6 +93,33 @@ app.include_router(api_router)
 app.include_router(scheduling_router)
 
 
+@app.get("/health")
+def health_check():
+    db_status = "healthy"
+    dialect = "unknown"
+    try:
+        from sqlalchemy import text
+        from app.core.database import engine
+        dialect = engine.dialect.name
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as e:
+        db_status = f"unhealthy: {e}"
+
+    is_healthy = "unhealthy" not in db_status
+    return {
+        "status": "healthy" if is_healthy else "degraded",
+        "service": "cliniq-backend",
+        "version": "1.0.0",
+        "database": {
+            "status": db_status,
+            "dialect": dialect,
+        },
+        "tracing": tracing_status(),
+        "persistence": pipeline.persistence_status(),
+    }
+
+
 @app.get("/")
 def home():
     return {

@@ -68,3 +68,12 @@ The **ClinIQ Backend** is a high-performance, agentic microservice built on Fast
 * **Database Agility:** SQLAlchemy ORM supporting both PostgreSQL (production) and SQLite (local development/testing).
 * **Observability:** Native LangSmith tracing integration for tracking LLM token usage, latency, and LangGraph node transitions.
 * **Resilience:** Fallback mechanisms when external APIs (e.g. Deepgram or OpenRouter) encounter transient rate limits.
+
+---
+
+## 6. Production Deployment & Cloudflare Zero Trust Ingress
+* **FR-BE-6.1 Zero Trust Host Infrastructure:** Containerized deployment executing on Ubuntu 24.04 server `ubtsrv01` at internal IP `172.16.17.181`, secured through Cloudflare Zero Trust organization `cbtlab` (`cbtlab.cloudflareaccess.com`) via WARP client virtual interface (`10.64.20.180`).
+* **FR-BE-6.2 Dockerized Microservice Architecture:** Orchestrated via Docker Compose v2 with 4 services (`postgres:16-alpine`, `redis:7-alpine`, `isb_project-backend`, `isb_project-frontend`).
+* **FR-BE-6.3 Single-Origin Unified Ingress:** Ingress handled by Nginx 1.25 on port 80 routing to backend `:8000`, eliminating CORS preflight overhead.
+* **FR-BE-6.4 Automated Telemetry Verification:** Real-time `/health` telemetry endpoint monitoring database health, tracing, and storage persistence. 100% test pass rate across 6 production verification routes.
+

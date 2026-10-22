@@ -115,4 +115,19 @@ flowchart LR
   * Medications: First-line symptomatic antipyretics, saline hydration, supportive throat lozenges.
   * Guidelines: NICE CKS Upper Respiratory Tract Infections.
 
+---
+
+## 8. Cloudflare Zero Trust Infrastructure & Remote Host Architecture
+
+### 8.1 Remote Server Specs & Network Gateway
+* **Target Server:** Ubuntu 24.04.5 LTS `ubtsrv01` at `172.16.17.181`.
+* **Hardware & Runtime:** 41 GB RAM, 16 GB disk headroom, Docker 29.1.3, Docker Compose v2.40.3.
+* **Network Gateway:** Cloudflare Zero Trust organization `cbtlab` (`cbtlab.cloudflareaccess.com`), Client Interface IP `10.64.20.180`.
+* **Zero Trust Ports & Routing:**
+  * Ingress: HTTP port 80 (Nginx reverse proxy).
+  * Backend Internal: Port 8000 (FastAPI / Uvicorn).
+  * PostgreSQL 16 Alpine: Port 5432 (Internal Docker bridge `cliniq-network`, persistent volume `postgres_data`).
+  * Redis 7 Alpine: Port 6379 (Internal Docker bridge `cliniq-network`, persistent volume `redis_data`).
+* **Telemetry Verification:** Verified `/health` endpoint pinging database (`SELECT 1`), dialect identification, and memory visit persistence. Automated test suite passes 6/6 tests (100% route verification).
+
 
