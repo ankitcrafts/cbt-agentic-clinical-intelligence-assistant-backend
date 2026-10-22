@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Any
 from dotenv import load_dotenv
 
 # Project roots & directories
@@ -38,7 +39,7 @@ def _build_database_url() -> str:
     return f"postgresql://{user}:{password}@{host}:{port}/{name}"
 
 
-def load_settings():
+def load_settings() -> dict[str, Any]:
     """Load application configuration from environment variables."""
 
     # Load .env files if they exist.

@@ -222,4 +222,15 @@ erDiagram
   * **API Docs:** `GET http://172.16.17.181/docs` (Swagger UI).
   * **Automated Verification:** 6/6 tests passing (100% success rate across health, telemetry, doctors, and user routes).
 
+---
+
+## 8. Configuration Architecture & Dialect Normalization
+
+* **Central Configuration Hub (`app/core/config.py`):**
+  * `load_settings() -> dict[str, Any]`: Loads root `.env` and application `.env` files with priority overriding. Returns an explicitly typed dictionary contract to prevent static type checkers (Pyright/Pylance) from inferring fragile heterogeneous unions (`dict[str, Union[str, int]]`).
+* **Database Driver Dialect Normalization (`app/db/session.py`):**
+  * `get_database_url() -> str`: Inspects `DATABASE_URL` or builds connection strings from discrete environment variables (`DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, `DB_NAME`).
+  * Normalizes standard `postgresql://` URI schemes to explicit SQLAlchemy Psycopg2 driver schemes (`postgresql+psycopg2://`), ensuring compatibility with SQLAlchemy 2.0+ and avoiding legacy psycopg driver resolution errors.
+  * Sanitizes all parsed connection components via defensive string wrapping (`str(settings.get(...) or "").strip()`), preventing type errors and runtime attribute mismatches.
+
 

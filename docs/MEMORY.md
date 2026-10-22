@@ -70,6 +70,11 @@
 * **Decision:** Installed Docker 29.1.3 and Docker Compose v2 on the remote server. Automated deployment with `scripts/deploy_production_remote.py` transferring pre-compiled assets, initializing `isb_project-backend` container image with PyTorch/FAISS/LangChain, setting up `clinical-postgres` with `cliniIQ` schema auto-bootstrap, and configuring Nginx reverse proxy.
 * **Consequence:** 100% test pass rate (6/6 routes verified). Host resources fully optimized (41 GB RAM, 16 GB disk headroom, active container telemetry at `/health`).
 
+### ADR-BE-14: Explicit Any-Typed Settings Contract & Defensive String Coercion
+* **Context:** In `app/core/config.py`, `load_settings()` returned an untyped dictionary literal containing both string values and integer values (`ACCESS_TOKEN_EXPIRE_MINUTES`, `OTP_EXPIRE_MINUTES`, `SMTP_PORT`). Static type checkers (Pyright/Pylance) inferred the return type as `dict[str, Union[str, int]]`. Consequently, callers in `app/db/session.py` evaluating `(settings.get("DATABASE_URL") or "").strip()` produced type error `Object of class 'int' has no attribute 'strip'` because `int` is part of the union.
+* **Decision:** Explicitly annotated `load_settings() -> dict[str, Any]` in `app/core/config.py`, and wrapped settings lookups with explicit `str()` casting (`str(settings.get(...) or "").strip()`) in `app/db/session.py` and `app/storage/s3_service.py`.
+* **Consequence:** Complete elimination of Pyright/Pylance type diagnostic warnings and prevention of runtime `AttributeError` on numeric environment inputs.
+
 ---
 
 ## 2. Environment Variables & Secret Configuration (`.env`)
@@ -156,5 +161,15 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
   1. Updated `upload_audio_recording` fallback handler in `app/api/routes.py` to generate complete clinical intelligence models (`differential_diagnosis`, `guideline_medicines`, `red_flags`, `confidence_metrics`, `follow_up_questions`, `soap_report`).
   2. Harmonized schema keys in `_fallback_differential` and `_extract_guideline_medicines` (`rank`, `name`, `title`, `condition`, `icd10_code`, `percentage`, `risk`, `color`, `dosage`, `grade`, `source`).
   3. Extended `AnalyzeConversationRequest` in `app/schemas/schemas.py` with `doctor_name`, `patient_name`, `doctor_initials`, `patient_initials`, and `visit_id` so consultation dialogues are processed with active patient clinical context.
+
+### Issue 7: Pyright Diagnostic: Object of class `int` has no attribute `strip` in `session.py:L20`
+* **Symptom:** VS Code / Pylance reports `Object of class int has no attribute strip` at `app/db/session.py:L20` when invoking `.strip()` on `(settings.get("DATABASE_URL") or "")`.
+* **Resolution:** 
+  1. Annotated `load_settings() -> dict[str, Any]` in `app/core/config.py` to prevent static type inference of heterogeneous `dict[str, Union[str, int]]`.
+  2. Wrapped retrieved dictionary entries in explicit string casts: `url = str(settings.get("DATABASE_URL") or "").strip()`, `user = str(settings.get("DB_USER") or "clinIQ_user")`, and `self.prefix = str(settings.get("S3_PREFIX") or "clinical-visits").strip("/")`.
+
+### Issue 8: Pyrefly Diagnostic: Stubs for `boto3` bundled with Pyrefly but source files not found (`s3_service.py:L31`)
+* **Symptom:** Type checker (Pyrefly/Pyright) warns `Stubs for 'boto3' are bundled with Pyrefly but the source files for the package are not found` at `app/storage/s3_service.py:L31`.
+* **Resolution:** While `boto3` was declared in `requirements.txt`, the package (along with `botocore`, `s3transfer`, `jmespath`) was not yet installed in the active virtual environment (`.venv`). Installed `boto3` and `nest_asyncio` into `.venv`, resolving runtime importability and type stub binding.
 
 

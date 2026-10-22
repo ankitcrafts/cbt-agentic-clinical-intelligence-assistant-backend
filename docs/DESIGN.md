@@ -304,3 +304,29 @@ class Appointment(Base):
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 ```
+
+---
+
+## 4. Database Session & Engine Configuration Contracts
+
+### 4.1 Connection Factory & URL Resolution (`app/db/session.py`)
+```python
+def get_database_url() -> str:
+    """
+    Resolves database connection URL with psycopg2 dialect normalization.
+    Safely coerces heterogeneous setting inputs (str/int) to strings.
+    """
+    settings = load_settings()
+    url = str(settings.get("DATABASE_URL") or "").strip()
+    if url:
+        if url.startswith("postgresql://"):
+            return url.replace("postgresql://", "postgresql+psycopg2://", 1)
+        return url
+    user = str(settings.get("DB_USER") or "clinIQ_user")
+    password = str(settings.get("DB_PASSWORD") or "password")
+    host = str(settings.get("DB_HOST") or "127.0.0.1")
+    port = str(settings.get("DB_PORT") or "5432")
+    name = str(settings.get("DB_NAME") or "cliniIQ")
+    return f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{name}"
+```
+

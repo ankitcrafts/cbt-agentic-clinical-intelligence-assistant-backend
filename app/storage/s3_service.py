@@ -14,11 +14,11 @@ from app.core.config import load_settings
 class S3Service:
     def __init__(self):
         settings = load_settings()
-        self.bucket = settings["S3_BUCKET"]
-        self.prefix = (settings["S3_PREFIX"] or "clinical-visits").strip("/")
-        self.region = settings["AWS_REGION"] or "ap-south-1"
-        self.access_key = settings["AWS_ACCESS_KEY_ID"]
-        self.secret_key = settings["AWS_SECRET_ACCESS_KEY"]
+        self.bucket = str(settings.get("S3_BUCKET") or "")
+        self.prefix = str(settings.get("S3_PREFIX") or "clinical-visits").strip("/")
+        self.region = str(settings.get("AWS_REGION") or "ap-south-1")
+        self.access_key = str(settings.get("AWS_ACCESS_KEY_ID") or "")
+        self.secret_key = str(settings.get("AWS_SECRET_ACCESS_KEY") or "")
         self._client = None
 
     @property

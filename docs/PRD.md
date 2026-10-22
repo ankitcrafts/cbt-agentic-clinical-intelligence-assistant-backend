@@ -68,6 +68,7 @@ The **ClinIQ Backend** is a high-performance, agentic microservice built on Fast
 * **Database Agility:** SQLAlchemy ORM supporting both PostgreSQL (production) and SQLite (local development/testing).
 * **Observability:** Native LangSmith tracing integration for tracking LLM token usage, latency, and LangGraph node transitions.
 * **Resilience:** Fallback mechanisms when external APIs (e.g. Deepgram or OpenRouter) encounter transient rate limits.
+* **Type Safety & Configuration Integrity:** Strict static type safety across environment settings loading and database connection strings, ensuring heterogeneous configuration types (integers, strings, booleans) are defensively validated and cast without runtime exceptions or static language server attribute errors.
 
 ---
 

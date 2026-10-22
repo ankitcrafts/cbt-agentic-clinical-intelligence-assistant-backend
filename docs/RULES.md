@@ -8,6 +8,7 @@
 ### 1.1 Code Style & PEP 8
 * **Python Target:** Python 3.12+.
 * **Type Annotations:** Strictly annotate all function arguments and return types. Use `typing` / Python 3.12 standard generics (`List`, `Dict`, `Optional`, `Union`, `Tuple`, or built-in `list[str]`, `dict[str, Any]`).
+* **Defensive Settings & Type Casting:** Functions returning heterogeneous dictionary mappings (such as `load_settings()`) must explicitly specify `-> dict[str, Any]` to prevent static type checkers (Pyright/Pylance) from inferring brittle union types (`dict[str, Union[str, int]]`). When retrieving string variables from settings dictionaries for formatting or sanitization (`.strip()`), always wrap lookups defensively in `str(settings.get(key) or "")` to guarantee type safety and prevent runtime `AttributeError`.
 * **Pydantic Validation:** All API request bodies and structured responses must be validated with Pydantic v2 schemas in `app/schemas/`.
 * **Async / Non-Blocking:** Use `async def` for I/O bound endpoints (e.g. database access, HTTP client calls to Deepgram/OpenRouter, email dispatch). Use synchronous threads via `run_in_executor` for CPU-bound tasks (e.g. local ReportLab PDF rendering, ChromaDB embeddings).
 

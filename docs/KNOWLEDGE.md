@@ -130,4 +130,19 @@ flowchart LR
   * Redis 7 Alpine: Port 6379 (Internal Docker bridge `cliniq-network`, persistent volume `redis_data`).
 * **Telemetry Verification:** Verified `/health` endpoint pinging database (`SELECT 1`), dialect identification, and memory visit persistence. Automated test suite passes 6/6 tests (100% route verification).
 
+---
+
+## 9. Python Static Type Analysis & Union Inference Quirks
+
+### 9.1 Heterogeneous Dictionary Literal Type Inference
+* **Mechanics:** In Python type checkers (Pylance, Pyright, Mypy), returning a dictionary literal containing both string values (`"DATABASE_URL": "postgresql://..."`) and integer values (`"SMTP_PORT": 587`) without an explicit return type annotation causes the analyzer to infer the return type as `dict[str, Union[str, int]]`.
+* **Member Access Diagnostic:** When callers retrieve values from this dictionary using `.get(key)` and chain string-specific methods (such as `.strip()`, `.lower()`, or `.startswith()`), the type checker validates the method against *all* union constituents (`str` and `int`). Because `int` lacks a `.strip()` method, Pyright raises:
+  ```text
+  Cannot access attribute "strip" for class "int"
+  Object of class "int" has no attribute "strip"
+  ```
+* **Mitigation Best Practices:**
+  1. **Annotate dictionary factories:** Explicitly annotate return types as `-> dict[str, Any]` to decouple heterogeneous values from rigid static union inference.
+  2. **Defensive string coercion:** Always wrap configuration lookups in `str(settings.get(key) or "").strip()` when performing string operations to ensure both static type safety and runtime resilience against numeric environment variables.
+
 
