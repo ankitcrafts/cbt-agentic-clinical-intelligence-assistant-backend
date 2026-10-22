@@ -55,6 +55,11 @@
 * **Decision:** In `GET /api/scheduling/patients/{patient_id}/sessions` and `GET /api/v1/patients/{patient_id}/sessions`, emit both `"aiSuggestions"` and `"ai_suggestions"` in the response payload. Added fallback extraction from `clinical_analysis_json` / `clinicalAnalysis` when root suggestions are omitted.
 * **Consequence:** 100% contract interoperability with legacy, active, and external API consumers.
 
+### ADR-BE-11: Strict Type-Safe Diagnosis Confidence & Optional Diagnoses Contract
+* **Context:** In `PipelineService.apply_follow_up`, an untyped dictionary literal with heterogeneous types (including `None` from `source_file`) caused Pyright to infer a broad union value type. Subscripting `result["differential_diagnosis"]` yielded this union, failing type assignment against `top_confidence(diagnoses: list[dict])`.
+* **Decision:** Explicitly typed `result: dict[str, Any] = { ... }`, extracted `diff_list = diagnosis.get("differential_diagnosis") or []` with `isinstance(diff_list, list)` validation, passed `diff_list` directly to `self.followup.top_confidence(diff_list)`, and expanded `top_confidence` and `needs_follow_up` signatures to accept `Optional[list[dict[str, Any]]] = None`.
+* **Consequence:** 100% type safety and zero Pyright/Pylance diagnostics across `pipeline_service.py` and `followup_service.py`, while resiliently handling missing/empty diagnosis inputs at runtime.
+
 ---
 
 ## 2. Environment Variables & Secret Configuration (`.env`)

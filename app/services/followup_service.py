@@ -14,20 +14,20 @@ class FollowUpService:
         self.llm = LLMService()
 
     @staticmethod
-    def top_confidence(diagnoses: list[dict]) -> float:
+    def top_confidence(diagnoses: Optional[list[dict[str, Any]]] = None) -> float:
         if not diagnoses:
             return 0.0
         values = []
         for item in diagnoses:
             try:
                 values.append(float(item.get("confidence") or 0))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, AttributeError):
                 values.append(0.0)
         return max(values) if values else 0.0
 
     def needs_follow_up(
         self,
-        diagnoses: list[dict],
+        diagnoses: Optional[list[dict[str, Any]]] = None,
         follow_up_iteration: int = 0,
         force: bool = False,
     ) -> bool:
@@ -85,7 +85,7 @@ Known missing information:
 {missing}
 """
         parsed = parse_llm_json(self.llm.invoke(prompt))
-        questions = parsed.get("follow_up_questions") or []
+        questions = (parsed.get("follow_up_questions") if isinstance(parsed, dict) else []) or []
         cleaned = []
         for index, item in enumerate(questions[:max_questions], start=1):
             if not isinstance(item, dict):
@@ -161,4 +161,5 @@ PREVIOUS summary:
 NEW follow-up conversation:
 {new_conversation}
 """
-        return parse_llm_json(self.llm.invoke(prompt))
+        merged = parse_llm_json(self.llm.invoke(prompt))
+        return merged if isinstance(merged, dict) else {"summary": str(merged)}

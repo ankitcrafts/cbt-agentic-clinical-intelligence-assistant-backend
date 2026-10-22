@@ -2,7 +2,10 @@ import json
 import re
 
 
-def parse_llm_json(text):
+from typing import Any
+
+
+def parse_llm_json(text: Any) -> Any:
     if isinstance(text, (dict, list)):
         return text
     cleaned = (text or "").strip()

@@ -186,7 +186,7 @@ class ClinicalPipeline:
         except Exception:
             soap_report = self._fallback_soap_report(summary, labeled_turns)
 
-        result = {
+        result: dict[str, Any] = {
             "visit_id": graph_result.get("visit_id") or visit_id,
             "thread_id": graph_result.get("thread_id") or visit_id,
             "transcript": transcript,
@@ -301,7 +301,11 @@ class ClinicalPipeline:
             chunks,
         )
 
-        result = {
+        diff_list = diagnosis.get("differential_diagnosis") or []
+        if not isinstance(diff_list, list):
+            diff_list = []
+
+        result: dict[str, Any] = {
             "visit_id": visit_id,
             "thread_id": visit_id,
             "transcript": prior.get("transcript", ""),
@@ -317,7 +321,7 @@ class ClinicalPipeline:
             "dense_hit_count": retrieval.get("dense_hit_count", 0),
             "bm25_hit_count": retrieval.get("bm25_hit_count", 0),
             "primary_guideline_used": diagnosis.get("primary_guideline_used", ""),
-            "differential_diagnosis": diagnosis.get("differential_diagnosis") or [],
+            "differential_diagnosis": diff_list,
             "source_file": prior.get("source_file"),
             "previous_summary": previous_summary,
             "previous_confidence": previous_confidence,
@@ -325,9 +329,7 @@ class ClinicalPipeline:
             "follow_up_questions": [],
             "status": "complete",
         }
-        new_confidence = self.followup.top_confidence(
-            result["differential_diagnosis"]
-        )
+        new_confidence = self.followup.top_confidence(diff_list)
         result["confidence"] = new_confidence
         result["confidence_improved"] = new_confidence > previous_confidence
         result["follow_up_threshold"] = CONFIDENCE_FOLLOW_UP_THRESHOLD
@@ -560,8 +562,10 @@ Entities: {entities}
 Differential: {diff_list}
 """
             res = parse_llm_json(self.llm.invoke(prompt))
-            if isinstance(res, dict) and "suggestions" in res:
-                return res["suggestions"]
+            if isinstance(res, dict):
+                suggestions = res.get("suggestions")
+                if isinstance(suggestions, list):
+                    return suggestions
         except Exception as e:
             print(f"[Warning] Failed to generate LLM suggestions: {e}")
 
@@ -1247,9 +1251,10 @@ Entities: {entities}
 Differential: {diff_list}
 """
             res = parse_llm_json(self.llm.invoke(prompt))
-            if isinstance(res, dict) and "follow_up_questions" in res and isinstance(res["follow_up_questions"], list) and len(res["follow_up_questions"]) > 0:
+            fq_list = res.get("follow_up_questions") if isinstance(res, dict) else None
+            if isinstance(fq_list, list) and len(fq_list) > 0:
                 formatted = []
-                for idx, q in enumerate(res["follow_up_questions"]):
+                for idx, q in enumerate(fq_list):
                     if isinstance(q, dict) and q.get("question"):
                         formatted.append({
                             "id": q.get("id") or f"fq-{idx + 1}",
