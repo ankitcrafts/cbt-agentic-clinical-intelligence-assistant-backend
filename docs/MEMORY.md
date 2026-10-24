@@ -75,6 +75,15 @@
 * **Decision:** Explicitly annotated `load_settings() -> dict[str, Any]` in `app/core/config.py`, and wrapped settings lookups with explicit `str()` casting (`str(settings.get(...) or "").strip()`) in `app/db/session.py` and `app/storage/s3_service.py`.
 * **Consequence:** Complete elimination of Pyright/Pylance type diagnostic warnings and prevention of runtime `AttributeError` on numeric environment inputs.
 
+### ADR-BE-15: Doctor Queue Seed Auto-Assignment & SQLAlchemy Psycopg Driver Normalization
+* **Context:** Signing in as newly registered clinicians (e.g. Dr. Ankit Kumar `DOC-008`, Cardiology) produced 0 scheduled patients because pre-existing PostgreSQL databases only contained default assignments for `DOC-001`, `DOC-002`, and `DOC-003`. Furthermore, in SQLAlchemy 2.0+, `DATABASE_URL = "postgresql://..."` defaults to `psycopg` (v3) rather than `psycopg2`, causing missing driver exceptions when connecting to remote databases.
+* **Decision:**
+  1. Updated `ensure_initial_seed_data(db)` in `app/api/scheduling.py` to seed patients (`Marcus Delgado`, `Arjun Nair`, `Priya Sharma`) and booked slots for `DOC-008` (`Dr. Ankit Kumar`).
+  2. Added auto-assignment detection in `ensure_initial_seed_data()`: if `DOC-008` exists but has 0 assigned patients in an existing database, it automatically re-assigns Marcus Delgado, Arjun Nair, and Priya Sharma, and marks slots `DOC-008-s1`, `s2`, `s3` as `BOOKED`.
+  3. Added department/triage queue fallback in `/api/scheduling/queue/{doctor_id_or_name}`.
+  4. Implemented `get_normalized_db_url(url)` in `app/core/database.py` to ensure `postgresql://` is converted to `postgresql+psycopg2://` before calling `create_engine()`.
+* **Consequence:** Immediate queue population for Dr. Ankit Kumar (`DOC-008`) with 3 active patients, eliminating zero-patient states across both initial and existing database deployments.
+
 ---
 
 ## 2. Environment Variables & Secret Configuration (`.env`)
@@ -171,5 +180,16 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ### Issue 8: Pyrefly Diagnostic: Stubs for `boto3` bundled with Pyrefly but source files not found (`s3_service.py:L31`)
 * **Symptom:** Type checker (Pyrefly/Pyright) warns `Stubs for 'boto3' are bundled with Pyrefly but the source files for the package are not found` at `app/storage/s3_service.py:L31`.
 * **Resolution:** While `boto3` was declared in `requirements.txt`, the package (along with `botocore`, `s3transfer`, `jmespath`) was not yet installed in the active virtual environment (`.venv`). Installed `boto3` and `nest_asyncio` into `.venv`, resolving runtime importability and type stub binding.
+
+### Issue 9: Doctor Queue Returns 0 Appointments & SQLAlchemy Psycopg Driver Exception
+* **Symptom:** Querying `/api/scheduling/queue/DOC-008` returned empty results `[]` and `queueCount: 0`. Connecting to PostgreSQL with `postgresql://` threw `ModuleNotFoundError: No module named 'psycopg'`.
+* **Root Cause:**
+  1. Default seed data only mapped patients to `DOC-001`, `DOC-002`, and `DOC-003`.
+  2. In SQLAlchemy 2.0+, `create_engine("postgresql://...")` attempts to load the `psycopg` (v3) driver by default rather than `psycopg2`.
+* **Resolution:**
+  1. Updated `app/core/database.py` with `get_normalized_db_url()` to automatically convert `postgresql://` to `postgresql+psycopg2://`.
+  2. Updated `ensure_initial_seed_data(db)` in `app/api/scheduling.py` to seed Marcus Delgado, Arjun Nair, and Priya Sharma for `DOC-008`, with automatic assignment checks on existing databases.
+  3. Added department-based and unassigned triage fallback in `/api/scheduling/queue/{doctor_id_or_name}`.
+
 
 

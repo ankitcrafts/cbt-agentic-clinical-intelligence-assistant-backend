@@ -330,3 +330,41 @@ def get_database_url() -> str:
     return f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{name}"
 ```
 
+### 4.2 Doctor Queue & Scheduling Contract (`GET /api/scheduling/queue/{doctor_id_or_name}`)
+```json
+// Response:
+{
+  "success": true,
+  "doctorId": "DOC-008",
+  "doctorName": "Dr. Ankit Kumar",
+  "queueCount": 3,
+  "data": [
+    {
+      "id": "#00847261",
+      "pid": "P-00847261",
+      "name": "Marcus Delgado",
+      "initials": "MD",
+      "age": 42,
+      "gender": "M",
+      "demographics": "42M · #00847261",
+      "arrivalTime": "08:45 AM",
+      "arrivalStatus": "IN_CONSULTATION",
+      "reason": "Hypertension review + new headache complaint",
+      "condition": "Hypertension Stage 1",
+      "vitals": {
+        "bp": "138/88 mmHg",
+        "hr": "72 bpm",
+        "pain": "5-6/10",
+        "spo2": "98%",
+        "temp": "36.6 °C"
+      },
+      "assignedDoctorId": "DOC-008",
+      "assignedDoctorName": "Dr. Ankit Kumar",
+      "assignedTimeSlot": "09:00 AM",
+      "visitType": "Follow-up"
+    }
+  ]
+}
+```
+
+

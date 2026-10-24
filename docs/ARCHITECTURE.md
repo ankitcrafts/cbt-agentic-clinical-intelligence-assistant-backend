@@ -218,6 +218,14 @@ erDiagram
   * **Host IP:** `172.16.17.181` (Ubuntu 24.04.5 LTS, Kernel 6.8.0-147-generic).
   * **Network Security:** Cloudflare Zero Trust organization `cbtlab` (`cbtlab.cloudflareaccess.com`).
   * **Client Interface IP:** `10.64.20.180` (WARP client tunnel).
+
+---
+
+## 8. Doctor Queue Seed Synchronization & Database Connection Dialect Normalization
+* **Database Driver Normalization:** In SQLAlchemy 2.0+, standard `postgresql://` connection strings default to `psycopg` (v3). `app/core/database.py` incorporates `get_normalized_db_url()` which rewrites `postgresql://` and `postgres://` to `postgresql+psycopg2://` before passing to `create_engine()`, ensuring seamless connection to PostgreSQL 16 using `psycopg2-binary`.
+* **Specialist Seed Synchronization:** `ensure_initial_seed_data(db)` in `app/api/scheduling.py` ensures that newly provisioned clinicians (such as Dr. Ankit Kumar `DOC-008`, Cardiology) receive booked slots and patient assignments (`Marcus Delgado`, `Arjun Nair`, `Priya Sharma`). It detects existing databases where `DOC-008` has 0 assigned patients and automatically re-assigns triage and department-matching patients to guarantee continuous clinic workflow.
+* **Intelligent Queue Fallback:** In `/api/scheduling/queue/{doctor_id_or_name}`, if direct doctor ID lookups return empty arrays, the service falls back to query unassigned triage patients (`arrival_status == 'ARRIVED'`) and department-matching patients (e.g., Cardiology), ensuring the clinical queue is never blank.
+
   * **Telemetry Endpoint:** `GET http://172.16.17.181/health` (verified HTTP 200 OK with live database ping).
   * **API Docs:** `GET http://172.16.17.181/docs` (Swagger UI).
   * **Automated Verification:** 6/6 tests passing (100% success rate across health, telemetry, doctors, and user routes).

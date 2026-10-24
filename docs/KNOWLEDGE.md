@@ -145,4 +145,10 @@ flowchart LR
   1. **Annotate dictionary factories:** Explicitly annotate return types as `-> dict[str, Any]` to decouple heterogeneous values from rigid static union inference.
   2. **Defensive string coercion:** Always wrap configuration lookups in `str(settings.get(key) or "").strip()` when performing string operations to ensure both static type safety and runtime resilience against numeric environment variables.
 
+---
+
+## 10. PostgreSQL Connection String Dialects & Driver Binding in SQLAlchemy 2.0+
+* **Dialect Mechanics:** In SQLAlchemy 2.0+, URI schemes starting with `postgresql://` or `postgres://` default to the newer `psycopg` (version 3) package rather than `psycopg2`. If `psycopg` (v3) is not installed in the environment, executing `create_engine("postgresql://...")` fails with `ModuleNotFoundError: No module named 'psycopg'`.
+* **Normalization Pattern:** The URI must explicitly declare the driver: `postgresql+psycopg2://<user>:<pass>@<host>:<port>/<db>`. Using a centralized normalizer `get_normalized_db_url()` guarantees that regardless of how environment variables are written (`postgresql://` vs `postgres://`), the engine always binds directly to `psycopg2-binary`.
+* **Queue Triage Allocation:** Clinical departments (e.g. Cardiology, Internal Medicine, Neurology) require automated patient assignment fallbacks. Outpatient queues must pair unassigned triage patients or matching condition cases with specialists whenever explicit doctor booking associations are unlinked.
 
