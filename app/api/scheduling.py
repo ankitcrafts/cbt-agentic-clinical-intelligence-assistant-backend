@@ -438,14 +438,37 @@ def ensure_initial_seed_data(db: Session):
                 condition="Hypertension Stage 1",
                 last_visit="July 14, 2026",
                 vitals_json=json.dumps({"bp": "138/88 mmHg", "hr": "72 bpm", "pain": "5-6/10", "spo2": "98%", "temp": "36.6 °C"}),
-                assigned_doctor_id="DOC-001",
-                assigned_doctor_name="Dr. Yuki Tanaka",
+                assigned_doctor_id="DOC-008",
+                assigned_doctor_name="Dr. Ankit Kumar",
                 assigned_time_slot="09:00 AM",
                 assigned_duration="30 min",
                 is_preferred_doctor_choice=True,
-                preferred_doctor_name="Dr. Yuki Tanaka",
+                preferred_doctor_name="Dr. Ankit Kumar",
                 visit_type="Follow-up",
-                booking_notes="Patient requested Dr. Yuki Tanaka specifically for cardiology follow-up.",
+                booking_notes="Patient requested Dr. Ankit Kumar specifically for cardiology follow-up.",
+            ),
+            PatientModel(
+                id="#00928174",
+                pid="P-00928174",
+                name="Arjun Nair",
+                initials="AN",
+                age=51,
+                gender="M",
+                phone="+1 (555) 890-1234",
+                demographics="51M · #00928174",
+                arrival_time="09:15 AM",
+                arrival_status="SCHEDULED",
+                reason="Elevated home BP readings, palpitation episodes",
+                condition="Arrhythmia screening",
+                last_visit="—",
+                vitals_json=json.dumps({"bp": "144/92 mmHg", "hr": "88 bpm", "pain": "0/10", "spo2": "97%", "temp": "36.9 °C"}),
+                assigned_doctor_id="DOC-008",
+                assigned_doctor_name="Dr. Ankit Kumar",
+                assigned_time_slot="09:45 AM",
+                assigned_duration="30 min",
+                is_preferred_doctor_choice=False,
+                visit_type="Consultation",
+                booking_notes="Allocated to Dr. Ankit Kumar for arrhythmia screening.",
             ),
             PatientModel(
                 id="#00391847",
@@ -456,19 +479,20 @@ def ensure_initial_seed_data(db: Session):
                 gender="F",
                 phone="+1 (555) 345-6789",
                 demographics="34F · #00391847",
-                arrival_time="09:15 AM",
-                arrival_status="SCHEDULED",
+                arrival_time="09:30 AM",
+                arrival_status="ARRIVED",
                 reason="Persistent morning dizziness & fatigue, thyroid review",
                 condition="Hypothyroidism",
                 last_visit="May 02, 2026",
                 vitals_json=json.dumps({"bp": "118/76 mmHg", "hr": "68 bpm", "pain": "0/10", "spo2": "99%", "temp": "36.8 °C"}),
-                assigned_doctor_id="DOC-001",
-                assigned_doctor_name="Dr. Yuki Tanaka",
-                assigned_time_slot="09:45 AM",
+                assigned_doctor_id="DOC-008",
+                assigned_doctor_name="Dr. Ankit Kumar",
+                assigned_time_slot="10:30 AM",
                 assigned_duration="30 min",
-                is_preferred_doctor_choice=False,
+                is_preferred_doctor_choice=True,
+                preferred_doctor_name="Dr. Ankit Kumar",
                 visit_type="Consultation",
-                booking_notes="Assigned based on cardiology queue availability.",
+                booking_notes="Patient requested Dr. Ankit Kumar for clinical review.",
             ),
             PatientModel(
                 id="#00512938",
@@ -566,28 +590,6 @@ def ensure_initial_seed_data(db: Session):
                 booking_notes="Patient requested Dr. Yuki Tanaka for AF check.",
             ),
             PatientModel(
-                id="#00928174",
-                pid="P-00928174",
-                name="Arjun Nair",
-                initials="AN",
-                age=51,
-                gender="M",
-                phone="+1 (555) 890-1234",
-                demographics="51M · #00928174",
-                arrival_time="09:50 AM",
-                arrival_status="ARRIVED",
-                reason="Elevated home BP readings, palpitation episodes",
-                condition="Arrhythmia screening",
-                last_visit="—",
-                vitals_json=json.dumps({"bp": "144/92 mmHg", "hr": "88 bpm", "pain": "0/10"}),
-                assigned_doctor_id=None,
-                assigned_doctor_name=None,
-                assigned_time_slot=None,
-                is_preferred_doctor_choice=False,
-                visit_type="Consultation",
-                booking_notes="Walk-in patient awaiting doctor allocation.",
-            ),
-            PatientModel(
                 id="#00472910",
                 pid="P-00472910",
                 name="Fatima Al-Zahra",
@@ -613,7 +615,44 @@ def ensure_initial_seed_data(db: Session):
         db.add_all(initial_patients)
         db.commit()
 
-    # Seed Doctor Slots if empty
+    # Ensure DOC-008 (Dr. Ankit Kumar) has patients assigned even if previously initialized
+    ankit_patients = db.query(PatientModel).filter(
+        or_(
+            PatientModel.assigned_doctor_id == "DOC-008",
+            PatientModel.assigned_doctor_name.ilike("%Ankit Kumar%")
+        )
+    ).count()
+    if ankit_patients == 0:
+        logger.info("Auto-assigning demonstration patients to DOC-008 (Dr. Ankit Kumar)...")
+        marcus = db.query(PatientModel).filter(PatientModel.id == "#00847261").first()
+        if marcus:
+            marcus.assigned_doctor_id = "DOC-008"
+            marcus.assigned_doctor_name = "Dr. Ankit Kumar"
+            marcus.assigned_time_slot = "09:00 AM"
+            marcus.assigned_duration = "30 min"
+            marcus.arrival_status = "IN_CONSULTATION"
+            marcus.is_preferred_doctor_choice = True
+            marcus.preferred_doctor_name = "Dr. Ankit Kumar"
+        arjun = db.query(PatientModel).filter(PatientModel.id == "#00928174").first()
+        if arjun:
+            arjun.assigned_doctor_id = "DOC-008"
+            arjun.assigned_doctor_name = "Dr. Ankit Kumar"
+            arjun.assigned_time_slot = "09:45 AM"
+            arjun.assigned_duration = "30 min"
+            arjun.arrival_status = "SCHEDULED"
+            arjun.booking_notes = "Allocated to Dr. Ankit Kumar for Arrhythmia screening."
+        priya = db.query(PatientModel).filter(PatientModel.id == "#00391847").first()
+        if priya:
+            priya.assigned_doctor_id = "DOC-008"
+            priya.assigned_doctor_name = "Dr. Ankit Kumar"
+            priya.assigned_time_slot = "10:30 AM"
+            priya.assigned_duration = "30 min"
+            priya.arrival_status = "ARRIVED"
+            priya.is_preferred_doctor_choice = True
+            priya.preferred_doctor_name = "Dr. Ankit Kumar"
+        db.commit()
+
+    # Seed Doctor Slots if empty or ensure DOC-008 slots
     slot_count = db.query(DoctorSlotModel).count()
     if slot_count == 0:
         logger.info("Seeding initial Doctor timing slots into database...")
@@ -640,6 +679,22 @@ def ensure_initial_seed_data(db: Session):
                     )
                 )
         db.add_all(slot_entries)
+        db.commit()
+    else:
+        # Sync DOC-008 slots with assigned patients
+        for slot_time, pat_id, pat_name in [
+            ("09:00 AM", "#00847261", "Marcus Delgado"),
+            ("09:45 AM", "#00928174", "Arjun Nair"),
+            ("10:30 AM", "#00391847", "Priya Sharma"),
+        ]:
+            s = db.query(DoctorSlotModel).filter(
+                DoctorSlotModel.doctor_id == "DOC-008",
+                DoctorSlotModel.time_slot == slot_time
+            ).first()
+            if s:
+                s.status = "BOOKED"
+                s.booked_patient_id = pat_id
+                s.booked_patient_name = pat_name
         db.commit()
 
 
@@ -1655,6 +1710,20 @@ def get_doctor_queue(doctor_id_or_name: str, db: Session = Depends(get_db)):
             )
         )
     ).order_by(PatientModel.assigned_time_slot.asc()).all()
+
+    # Graceful fallback: If no patients directly assigned to this doctor, include department and triage patients
+    if not patients:
+        doc_dept = (matched_doc.get("department") if isinstance(matched_doc, dict) else "Cardiology") or "Cardiology"
+        patients = db.query(PatientModel).filter(
+            or_(
+                PatientModel.assigned_doctor_id.is_(None),
+                PatientModel.arrival_status == "ARRIVED",
+                PatientModel.condition.ilike(f"%{doc_dept}%"),
+                PatientModel.reason.ilike(f"%{doc_dept}%"),
+                PatientModel.reason.ilike("%hypertension%"),
+                PatientModel.reason.ilike("%cardio%")
+            )
+        ).order_by(PatientModel.assigned_time_slot.asc()).all()
 
     queue_items = []
     for p in patients:

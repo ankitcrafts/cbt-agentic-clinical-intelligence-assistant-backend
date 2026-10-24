@@ -9,12 +9,19 @@ logger = logging.getLogger(__name__)
 Base = declarative_base()
 
 
+def get_normalized_db_url(url: str) -> str:
+    """Normalize postgresql URL to use psycopg2 binary driver explicitly if needed."""
+    if isinstance(url, str) and url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    return url
+
+
 def ensure_postgres_database():
     """Ensure the target PostgreSQL database exists before connecting."""
     if not isinstance(DATABASE_URL, str) or not DATABASE_URL.startswith("postgresql"):
         return
 
-    admin_url = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/postgres"
+    admin_url = f"postgresql+psycopg2://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/postgres"
     try:
         temp_engine = create_engine(admin_url, isolation_level="AUTOCOMMIT")
         with temp_engine.connect() as conn:
@@ -33,9 +40,10 @@ def ensure_postgres_database():
 def create_db_engine():
     """Create database engine with fallback for seamless developer experience."""
     ensure_postgres_database()
+    target_url = get_normalized_db_url(DATABASE_URL)
     try:
         engine = create_engine(
-            DATABASE_URL,
+            target_url,
             pool_pre_ping=True,
             pool_size=10,
             max_overflow=20,
