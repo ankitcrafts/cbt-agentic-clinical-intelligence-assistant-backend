@@ -241,4 +241,19 @@ erDiagram
   * Normalizes standard `postgresql://` URI schemes to explicit SQLAlchemy Psycopg2 driver schemes (`postgresql+psycopg2://`), ensuring compatibility with SQLAlchemy 2.0+ and avoiding legacy psycopg driver resolution errors.
   * Sanitizes all parsed connection components via defensive string wrapping (`str(settings.get(...) or "").strip()`), preventing type errors and runtime attribute mismatches.
 
+---
+
+## 9. Relational Persistence Architecture, Host Port Exposure & Dual-Trigger SOAP Synchronization
+
+* **PostgreSQL Ingress & Port Exposure (`docker-compose.prod.yml`):**
+  * `cliniq-postgres-prod` publishes container port `5432` to the host (`5432:5432`), enabling direct relational access from external database administration clients (pgAdmin 4, DBeaver, automated telemetry scripts) across Cloudflare Zero Trust / LAN.
+  * Multi-Database Coexistence: The PostgreSQL 16 Alpine container maintains both the primary production database `cliniIQ` and a migration/mirror database `cliniq_db` to support legacy queries and zero-downtime historical synchronizations.
+* **Bi-directional Doctor Entity Synchronization (`DoctorModel` & `User`):**
+  * Clinician profiles registered via OTP (`role == "DOCTOR"`) or provisioned via administration routes automatically synchronize with both the `users` table and the dedicated `doctors` (`DoctorModel`) relational table.
+  * Lifecycle operations (`register_new_doctor`, `update_doctor`, `toggle_doctor_duty`, and `delete_doctor` in `app/api/scheduling.py`) perform atomic dual writes to ensure foreign key integrity for `DoctorSlot` and clinical queue rosters.
+* **Dual-Trigger SOAP Feedback Persistence (`soap_feedback`):**
+  * Both consultation completion (`/api/scheduling/patients/{patient_id}/complete-consultation`) and SOAP sharing (`/api/scheduling/patients/{patient_id}/share-soap`) automatically persist or update the structured SOAP note in the `soap_feedback` table.
+  * Clinical consultation sessions containing a `soap_report` or `soap_report_json` populate `soap_feedback` with `is_finalized = True`, capturing physician adjustments, original RAG output, and timestamped audit logs for continuous learning.
+
+
 

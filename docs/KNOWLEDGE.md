@@ -152,3 +152,22 @@ flowchart LR
 * **Normalization Pattern:** The URI must explicitly declare the driver: `postgresql+psycopg2://<user>:<pass>@<host>:<port>/<db>`. Using a centralized normalizer `get_normalized_db_url()` guarantees that regardless of how environment variables are written (`postgresql://` vs `postgres://`), the engine always binds directly to `psycopg2-binary`.
 * **Queue Triage Allocation:** Clinical departments (e.g. Cardiology, Internal Medicine, Neurology) require automated patient assignment fallbacks. Outpatient queues must pair unassigned triage patients or matching condition cases with specialists whenever explicit doctor booking associations are unlinked.
 
+---
+
+## 11. PostgreSQL Multi-Database Architecture, Port Ingress & Cross-Environment Synchronization
+
+### 11.1 Local vs Containerized Production Database Discrepancy
+* **Context:** Developers and administrators running pgAdmin 4 locally often configure connections to `localhost:5432/cliniq_db` (a local Windows PostgreSQL service). However, the containerized application deployed at `https://172.16.17.181/` operates against `cliniq-postgres-prod` with default database `cliniIQ`.
+* **Resolution:** 
+  1. `docker-compose.prod.yml` explicitly publishes `5432:5432` to the remote host.
+  2. pgAdmin 4 connects directly across Cloudflare Zero Trust / LAN to host `172.16.17.181`, port `5432`, user `clinIQ_user`, password `cliniq_secure_pass_2026`.
+  3. Both `cliniIQ` (active production) and `cliniq_db` (migration/mirror database) coexist in the same PostgreSQL cluster.
+
+### 11.2 Safe Cross-Host SQL Synchronization via Dollar-Quoted Literals
+* **Problem:** Medical records, SOAP notes, and JSON payloads frequently contain single quotes (`'`), double quotes (`"`), newlines, and bullet characters. Passing SQL queries through Bash or SSH command strings leads to quote mismatch syntax errors (`psql: warning: extra command-line argument... ignored`).
+* **Pattern:** Always format string literals using PostgreSQL dollar-quoting (`$text$...$text$` or `$soap$...$soap$`). SFTP the generated `.sql` file to the remote host and pipe directly into `psql`:
+  ```bash
+  cat /tmp/sync.sql | docker exec -i cliniq-postgres-prod psql -U clinIQ_user -d cliniIQ
+  ```
+
+

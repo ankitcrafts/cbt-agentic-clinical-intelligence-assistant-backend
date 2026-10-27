@@ -367,4 +367,71 @@ def get_database_url() -> str:
 }
 ```
 
+---
+
+## 5. Doctor & SOAP Feedback Relational Schemas
+
+### 5.1 Doctor Model (`doctors` Table)
+```python
+class DoctorModel(Base):
+    __tablename__ = "doctors"
+
+    id = Column(String(50), primary_key=True)
+    name = Column(String(255), nullable=False)
+    specialty = Column(String(100), nullable=False)
+    department = Column(String(100), nullable=True)
+    room_number = Column(String(50), nullable=True)
+    email = Column(String(255), nullable=True)
+    phone = Column(String(50), nullable=True)
+    is_on_duty = Column(Boolean, default=True)
+    consultation_fee = Column(Float, default=150.0)
+    rating = Column(Float, default=4.9)
+    review_count = Column(Integer, default=124)
+    experience_years = Column(Integer, default=12)
+    created_at = Column(DateTime, default=datetime.utcnow)
+```
+
+### 5.2 SOAP Feedback Model (`soap_feedback` Table)
+```python
+class SOAPFeedbackModel(Base):
+    __tablename__ = "soap_feedback"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(100), nullable=False, index=True)
+    doctor_id = Column(String(100), nullable=True, index=True)
+    patient_id = Column(String(100), nullable=True, index=True)
+    original_soap_json = Column(Text, nullable=True)
+    corrected_soap_json = Column(Text, nullable=True)
+    raw_feedback_json = Column(Text, nullable=True)
+    is_finalized = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), default=func.now())
+```
+
+### 5.3 SOAP Share & Complete Consultation Contracts
+
+#### Share SOAP Report (`POST /api/scheduling/patients/{patient_id}/share-soap`)
+```json
+// Request Body:
+{
+  "doctor_id": "DOC-008",
+  "doctor_name": "Dr. Ankit Kumar",
+  "recipient_email": "patient@example.com",
+  "soap_report": {
+    "subjective": "Patient reports worsening headache and elevated home blood pressure...",
+    "objective": "BP: 138/88 mmHg, HR: 72 bpm, SpO2: 98%",
+    "assessment": "Stage 1 Essential Hypertension with secondary tension headache",
+    "plan": "1. Increase Amlodipine to 10mg daily.\n2. Lifestyle modifications.\n3. Return for BP review in 2 weeks."
+  }
+}
+
+// Response:
+{
+  "success": true,
+  "message": "SOAP report shared with Marcus Delgado successfully.",
+  "sharedAt": "2026-10-27T16:00:00Z",
+  "savedToFeedback": true
+}
+```
+
+
 

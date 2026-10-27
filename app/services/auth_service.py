@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import JWT_SECRET_KEY, JWT_ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, OTP_EXPIRE_MINUTES, SMTP_EMAIL, SMTP_PASSWORD
 from app.core.database import get_db
-from app.models.models import User, OTPVerification, PatientModel
+from app.models.models import User, OTPVerification, PatientModel, DoctorModel
 from app.schemas.auth import SendOTPRequest, SendOTPResponse, VerifyOTPRequest, UpdateProfileRequest, AuthResponse, UserProfileResponse, UserRole
 from app.services.email_service import send_otp_email
 
@@ -218,6 +218,34 @@ def verify_otp_and_authenticate(req: VerifyOTPRequest, db: Session) -> AuthRespo
                 db.add(new_patient)
                 db.commit()
                 logger.info(f"Created PatientModel {pat_id} for {email_clean}")
+
+        # If DOCTOR, also ensure doctor profile exists in PostgreSQL doctors table
+        if active_role == "DOCTOR":
+            existing_doc = db.query(DoctorModel).filter(
+                (DoctorModel.email == email_clean) | (DoctorModel.id == user_id)
+            ).first()
+            if not existing_doc:
+                doc_name = full_name or "Dr. Attending Physician"
+                initials = "".join([part[0] for part in doc_name.replace("Dr.", "").split() if part])[:2].upper() or "DR"
+                new_doc = DoctorModel(
+                    id=user_id,
+                    name=doc_name,
+                    initials=initials,
+                    specialty=req.specialization or "Cardiology",
+                    department=req.department or "Cardiology",
+                    email=email_clean,
+                    phone="+1 (555) 000-0000",
+                    room="Suite 101",
+                    experience="Attending Specialist",
+                    qualification="MD, MBBS",
+                    is_new_upcoming=False,
+                    shift_timing="09:00 AM - 05:00 PM",
+                    available=True,
+                    duty_status="On duty"
+                )
+                db.add(new_doc)
+                db.commit()
+                logger.info(f"Created DoctorModel {user_id} for {email_clean}")
     else:
         # Strict RBAC Check on existing user: DO NOT allow cross-role hijacking
         if user.role != active_role:

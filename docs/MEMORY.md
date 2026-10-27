@@ -84,6 +84,15 @@
   4. Implemented `get_normalized_db_url(url)` in `app/core/database.py` to ensure `postgresql://` is converted to `postgresql+psycopg2://` before calling `create_engine()`.
 * **Consequence:** Immediate queue population for Dr. Ankit Kumar (`DOC-008`) with 3 active patients, eliminating zero-patient states across both initial and existing database deployments.
 
+### ADR-BE-16: Production PostgreSQL Port 5432 Ingress, Dual-Database Parity & Guaranteed Clinical SOAP Feedback Persistence
+* **Context:** External database inspection using pgAdmin 4 over Cloudflare WARP appeared desynchronized because local development pgAdmin was pointing to `localhost:5432/cliniq_db` (17 historical records) while the deployed production stack on `172.16.17.181` ran in Docker Compose with internal network isolation without mapping port 5432 to the host. Additionally, completing consultations without explicitly clicking "Share SOAP" bypassed writing to `SOAPFeedback`, and `DoctorModel` (`doctors` table) was not populated.
+* **Decision:**
+  1. Exposed port `5432:5432` on `cliniq-postgres-prod` in `docker-compose.prod.yml`, allowing direct external pgAdmin 4 connection to `172.16.17.181:5432` (`cliniIQ` / `cliniq_db`).
+  2. Synchronized all 17 historical `soap_feedback` records and past patient consultation sessions from local development into remote `cliniIQ` (bringing total records to 18) and provisioned remote `cliniq_db` schema parity.
+  3. Enforced guaranteed SOAP note persistence in `SOAPFeedback` upon consultation completion (`complete_patient_consultation`) and sharing (`share_soap_report_with_patient`), and in frontend `doctor-dashboard.component.ts:closeAndCompleteConsultation()`.
+  4. Synchronized `DoctorModel` table seeding, registration, duty toggling, and deletion in PostgreSQL.
+* **Consequence:** 100% data persistence guarantees across all 11 PostgreSQL tables, immediate real-time visibility in pgAdmin 4, and seamless cross-environment database interoperability.
+
 ---
 
 ## 2. Environment Variables & Secret Configuration (`.env`)

@@ -417,6 +417,32 @@ def ensure_initial_seed_data(db: Session):
                 is_active=doc["available"]
             )
             db.add(new_u)
+
+        # Also ensure seeded in DoctorModel table
+        existing_doc = db.query(DoctorModel).filter(
+            or_(
+                DoctorModel.id == doc["id"],
+                DoctorModel.email == doc["email"]
+            )
+        ).first()
+        if not existing_doc:
+            new_doc = DoctorModel(
+                id=doc["id"],
+                name=doc["name"],
+                initials=doc["initials"],
+                specialty=doc["specialty"],
+                department=doc["department"],
+                email=doc["email"],
+                phone=doc["phone"],
+                room=doc["room"],
+                experience=doc["experience"],
+                qualification=doc["qualification"],
+                is_new_upcoming=doc.get("isNewUpcoming", False),
+                shift_timing=doc.get("shiftTiming", "09:00 AM - 05:00 PM"),
+                available=doc.get("available", True),
+                duty_status=doc.get("dutyStatus", "On duty")
+            )
+            db.add(new_doc)
     db.commit()
 
     patient_count = db.query(PatientModel).count()
@@ -1281,6 +1307,28 @@ def register_new_doctor(payload: DoctorCreateSchema, db: Session = Depends(get_d
         db.add(new_user)
         db.commit()
 
+    # Also register in DoctorModel table
+    existing_dm = db.query(DoctorModel).filter(DoctorModel.id == doc_id).first()
+    if not existing_dm:
+        new_dm = DoctorModel(
+            id=doc_id,
+            name=formatted_name,
+            initials=initials,
+            specialty=payload.specialty.strip(),
+            department=payload.department.strip(),
+            email=email_clean,
+            phone=payload.phone or "+1 (555) 000-0000",
+            room=payload.room or "Suite 101",
+            experience=payload.experience or ("New Upcoming Specialist" if payload.is_new_upcoming else "Attending Specialist"),
+            qualification=payload.qualification or "MD, MBBS",
+            is_new_upcoming=bool(payload.is_new_upcoming),
+            shift_timing=payload.shift_timing or "09:00 AM - 05:00 PM",
+            available=payload.duty_status == "On duty",
+            duty_status=payload.duty_status or "On duty",
+        )
+        db.add(new_dm)
+        db.commit()
+
     # Generate standard slots for the new doctor
     slot_duration = payload.slot_duration or "30 min"
     standard_times = ["09:00 AM", "09:45 AM", "10:30 AM", "11:15 AM", "02:00 PM", "02:45 PM", "03:30 PM", "04:15 PM"]
@@ -1374,6 +1422,36 @@ def update_doctor(doctor_id: str, payload: DoctorUpdateSchema, db: Session = Dep
             u.phone_number = payload.phone.strip()
         db.commit()
 
+    # Also update in DoctorModel table
+    dm = db.query(DoctorModel).filter(DoctorModel.id.ilike(clean_id)).first()
+    if dm:
+        if payload.name is not None and payload.name.strip():
+            dm.name = payload.name.strip()
+            dm.initials = "".join([p[0] for p in dm.name.replace("Dr.", "").strip().split() if p])[:2].upper() or "DR"
+        if payload.department is not None:
+            dm.department = payload.department.strip()
+        if payload.specialty is not None:
+            dm.specialty = payload.specialty.strip()
+        if payload.phone is not None:
+            dm.phone = payload.phone.strip()
+        if payload.room is not None:
+            dm.room = payload.room.strip()
+        if payload.experience is not None:
+            dm.experience = payload.experience.strip()
+        if payload.qualification is not None:
+            dm.qualification = payload.qualification.strip()
+        if payload.is_new_upcoming is not None:
+            dm.is_new_upcoming = payload.is_new_upcoming
+        if payload.duty_status is not None:
+            dm.duty_status = payload.duty_status
+            dm.available = (payload.duty_status == "On duty")
+        if payload.available is not None:
+            dm.available = payload.available
+            dm.duty_status = "On duty" if payload.available else "Off duty"
+        if payload.shift_timing is not None:
+            dm.shift_timing = payload.shift_timing.strip()
+        db.commit()
+
     # Re-fetch doctor profile
     all_docs = get_all_doctors_from_db(db)
     updated_doc = next((d for d in all_docs if d["id"].lower() == clean_id), matched_doc)
@@ -1405,6 +1483,13 @@ def toggle_doctor_duty(doctor_id: str, db: Session = Depends(get_db)):
             new_status = doc["dutyStatus"]
             new_avail = doc["available"]
             break
+
+    # Also update in DoctorModel table
+    dm = db.query(DoctorModel).filter(DoctorModel.id.ilike(clean_id)).first()
+    if dm:
+        dm.duty_status = new_status
+        dm.available = new_avail
+        db.commit()
 
     return {
         "success": True,
@@ -1499,6 +1584,11 @@ def delete_doctor(doctor_id: str, db: Session = Depends(get_db)):
     u = db.query(User).filter(User.id == doctor_id).first()
     if u:
         db.delete(u)
+
+    # Delete doctor model if exists
+    dm = db.query(DoctorModel).filter(DoctorModel.id == doctor_id).first()
+    if dm:
+        db.delete(dm)
 
     db.commit()
 
@@ -1989,6 +2079,36 @@ def share_soap_report_with_patient(
     patient.arrival_status = "COMPLETED"
     patient.last_visit = datetime.now().strftime("%B %d, %Y")
 
+    # Guaranteed persistence to SOAPFeedback table in PostgreSQL
+    try:
+        eff_enc_id = payload.encounter_id or session_obj.encounter_id or f"CONS-{patient.id.replace('#', '')}"
+        fb = db.query(SOAPFeedback).filter(
+            (SOAPFeedback.encounter_id == eff_enc_id) |
+            (SOAPFeedback.encounter_id == patient.id)
+        ).first()
+        patient_summary = payload.patient_summary or (payload.soap_report.get("plan") if isinstance(payload.soap_report, dict) else "")
+        if not fb:
+            fb = SOAPFeedback(
+                id=str(uuid.uuid4()),
+                encounter_id=eff_enc_id,
+                doctor_id=payload.doctor_id or patient.assigned_doctor_id or "DOC-001",
+                patient_id=patient.id,
+                original_soap_json=soap_json_str,
+                edited_soap_json=soap_json_str,
+                edit_reason="Doctor shared finalized SOAP report with patient",
+                edited_section="all",
+                patient_summary=patient_summary or "",
+                is_finalized=True,
+            )
+            db.add(fb)
+        else:
+            fb.edited_soap_json = soap_json_str
+            fb.is_finalized = True
+            if patient_summary:
+                fb.patient_summary = patient_summary
+    except Exception as fb_err:
+        logger.warning(f"Failed to auto-persist SOAP feedback in share-soap: {fb_err}")
+
     db.commit()
     db.refresh(session_obj)
 
@@ -2051,6 +2171,33 @@ def complete_patient_consultation(
             latest_sess.doctor_id = doc_id
         if doc_name:
             latest_sess.doctor_name = doc_name
+
+    # Guaranteed persistence to SOAPFeedback table in PostgreSQL if session has SOAP
+    if latest_sess and latest_sess.soap_report_json:
+        try:
+            eff_enc_id = latest_sess.encounter_id or f"CONS-{patient.id.replace('#', '')}"
+            fb = db.query(SOAPFeedback).filter(
+                (SOAPFeedback.encounter_id == eff_enc_id) |
+                (SOAPFeedback.encounter_id == patient.id)
+            ).first()
+            if not fb:
+                fb = SOAPFeedback(
+                    id=str(uuid.uuid4()),
+                    encounter_id=eff_enc_id,
+                    doctor_id=doc_id,
+                    patient_id=patient.id,
+                    original_soap_json=latest_sess.soap_report_json,
+                    edited_soap_json=latest_sess.soap_report_json,
+                    edit_reason="Doctor completed and finalized consultation session",
+                    edited_section="all",
+                    patient_summary="",
+                    is_finalized=True,
+                )
+                db.add(fb)
+            else:
+                fb.is_finalized = True
+        except Exception as fb_err:
+            logger.warning(f"Failed to auto-persist SOAP feedback in complete-consultation: {fb_err}")
 
     db.commit()
     db.refresh(patient)
