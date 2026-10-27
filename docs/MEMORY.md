@@ -200,5 +200,32 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
   2. Updated `ensure_initial_seed_data(db)` in `app/api/scheduling.py` to seed Marcus Delgado, Arjun Nair, and Priya Sharma for `DOC-008`, with automatic assignment checks on existing databases.
   3. Added department-based and unassigned triage fallback in `/api/scheduling/queue/{doctor_id_or_name}`.
 
+### Issue 10: PostgreSQL Port Exposure & Dual Database Provisioning
+* **Symptom:** Client-side pgAdmin 4 connection attempts failed because PostgreSQL container port 5432 was not exposed to the host interface in `docker-compose.prod.yml`.
+* **Resolution:** Exposed port `5432:5432` in `docker-compose.prod.yml`, provisioned dual databases `cliniIQ` and `cliniq_db`, and imported historical tables using dollar-quoted SQL commands.
+
+### Issue 11: Past Session Dialogue Intrusion into Active Encounter
+* **Symptom:** Previous consultation dialogue was leaking into "+ Today's Active Session", displaying historical turns before any new recording had commenced.
+* **Resolution:** Decoupled active live session state from historical session reviews, enforcing empty array `[]` initialization across patient switching and live consultation launches.
+
+---
+
+## 4. Architectural Decision Records (ADRs)
+
+### ADR 14: Relational Persistence Port Exposure & Dual-Trigger SOAP Synchronization
+* **Status:** Accepted (2026-10-27)
+* **Context:** Remote administrative verification of clinical database tables required direct SQL access to the containerized database from client machines running pgAdmin 4 over Cloudflare Zero Trust.
+* **Decision:**
+  1. Publish PostgreSQL port `5432` from `cliniq-postgres-prod` to the host network interface.
+  2. Implement dual-trigger SOAP feedback persistence in both frontend and backend upon consultation completion.
+* **Consequences:** Direct SQL observability across the private network and guaranteed persistence of all completed consultations.
+
+### ADR 15: Clean Slate State Decoupling for Active Consultations vs Historical Encounters
+* **Status:** Accepted (2026-10-27)
+* **Context:** In a clinical consultation workspace, clinicians need to review past sessions without contaminating new active consultations.
+* **Decision:** Live active session data is governed by dedicated `liveActive*` properties that remain isolated from past session views and reset to empty state upon starting or selecting the active session.
+* **Consequences:** Ensures zero historical dialogue leakage into active consultations.
+
+
 
 
